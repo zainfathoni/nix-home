@@ -15,6 +15,9 @@
       | jq -r '.[].outputs | to_entries[].value' \
       | cachix push zain'';
 
+    # Frequently used Brew commands
+    bl = "brew list -1";
+
     # Frequently used Git commands
     gst = "git status";
     gco = "git checkout";
