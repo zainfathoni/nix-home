@@ -20,6 +20,7 @@
   programs.home-manager.enable = true;
 
   imports = [
+    ./shells.nix # Shell configurations
     ./git.nix # Git configurations
   ];
 }
