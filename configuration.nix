@@ -12,4 +12,10 @@
     auto-optimise-store = true
     experimental-features = nix-command flakes
   '';
+
+  # Keyboard mapping
+  # https://daiderd.com/nix-darwin/manual/index.html#opt-system.keyboard.enableKeyMapping
+  system.keyboard.enableKeyMapping = true;
+  # https://daiderd.com/nix-darwin/manual/index.html#opt-system.keyboard.remapCapsLockToEscape
+  system.keyboard.remapCapsLockToEscape = true;
 }
