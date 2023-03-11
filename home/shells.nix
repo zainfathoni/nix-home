@@ -47,6 +47,7 @@
     # https://starship.rs
     starship = {
       enable = true;
+      enableZshIntegration = true;
       settings = {
         add_newline = true;
         command_timeout = 1000;
