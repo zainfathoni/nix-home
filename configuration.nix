@@ -21,7 +21,7 @@
 
   # Keyboard mapping
   # https://daiderd.com/nix-darwin/manual/index.html#opt-system.keyboard.enableKeyMapping
-  system.keyboard.enableKeyMapping = true;
+  # system.keyboard.enableKeyMapping = true;
   # https://daiderd.com/nix-darwin/manual/index.html#opt-system.keyboard.remapCapsLockToEscape
-  system.keyboard.remapCapsLockToEscape = true;
+  # system.keyboard.remapCapsLockToEscape = true;
 }

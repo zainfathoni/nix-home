@@ -18,6 +18,7 @@
     "around"
     "gitkraken"
     "gpg-suite-no-mail"
+    "karabiner-elements"
     "lastpass"
     "rectangle"
     "visual-studio-code"
