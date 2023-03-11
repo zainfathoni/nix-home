@@ -15,6 +15,10 @@
     extra-nix-path = nixpkgs=flake:nixpkgs
   '';
 
+  # macOS system defaults configuration
+  # https://daiderd.com/nix-darwin/manual/index.html#opt-system.defaults.dock.autohide
+  system.defaults.dock.autohide = true;
+
   # Keyboard mapping
   # https://daiderd.com/nix-darwin/manual/index.html#opt-system.keyboard.enableKeyMapping
   system.keyboard.enableKeyMapping = true;
