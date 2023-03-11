@@ -22,6 +22,7 @@
     darwinConfigurations.zain = darwin.lib.darwinSystem {
       system = "aarch64-darwin";
       modules = [
+        # Main `nix-darwin` configuration
         ./configuration.nix
       ];
     };
