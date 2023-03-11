@@ -27,6 +27,10 @@
         # https://github.com/LnL7/nix-darwin#flakes-experimental
         ./configuration.nix
 
+        # Homebrew configuration
+        # https://xyno.space/post/nix-darwin-introduction
+        ./homebrew.nix
+
         # The flake-based setup of the Home Manager `nix-darwin` module
         # https://nix-community.github.io/home-manager/index.html#sec-flakes-nix-darwin-module
         home-manager.darwinModules.home-manager
