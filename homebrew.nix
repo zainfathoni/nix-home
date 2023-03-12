@@ -11,6 +11,12 @@
   # https://daiderd.com/nix-darwin/manual/index.html#opt-homebrew.global.brewfile
   homebrew.global.brewfile = true;
 
+  # List of Homebrew formulae to install.
+  # https://daiderd.com/nix-darwin/manual/index.html#opt-homebrew.brews
+  homebrew.brews = [
+    "yadm"
+  ];
+
   # List of Homebrew casks to install.
   # https://daiderd.com/nix-darwin/manual/index.html#opt-homebrew.casks
   homebrew.casks = [
