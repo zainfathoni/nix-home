@@ -1,0 +1,17 @@
+---
+name: Clean merged remote branches
+command: "git checkout {{branch}} && git pull && git fetch && git branch -r --merged | egrep -v \"(^\\*|{{branch}}|{{protected_branches}})\" | sed 's/origin\\///' | xargs -n 1 git push --delete origin"
+tags:
+  - git
+description: Sets the URL for a remote git repository to a new URL
+arguments:
+  - name: branch
+    description: The base branch to check out
+    default_value: master
+  - name: protected_branches
+    description: Other long-living branches that should not be deleted
+    default_value: qa|dev
+source_url: "https://www.tomchapin83.com/how-to-clean-up-git-branches-that-have-already-been-merged/"
+author: zainfathoni
+author_url: "https://github.com/zainfathoni"
+shells: []

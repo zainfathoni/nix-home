@@ -1,0 +1,14 @@
+---
+name: Prune local branches
+command: "git checkout {{branch}} && git pull && git fetch --prune && git remote update --prune && git branch -vv | grep ': gone]'| grep -v \"\\*\" | awk '{ print $1; }' | xargs git branch -d"
+tags:
+  - git
+description: Sets the URL for a remote git repository to a new URL
+arguments:
+  - name: branch
+    description: The base branch to check out
+    default_value: master
+source_url: "https://www.tomchapin83.com/how-to-clean-up-git-branches-that-have-already-been-merged/"
+author: zainfathoni
+author_url: "https://github.com/zainfathoni"
+shells: []
