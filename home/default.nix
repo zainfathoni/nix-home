@@ -20,6 +20,7 @@
   programs.home-manager.enable = true;
 
   imports = [
+    ./packages.nix # Packages that are not included in `nix-darwin` and `home-manager`
     ./shells.nix # Shell configurations
     ./git.nix # Git configurations
   ];
