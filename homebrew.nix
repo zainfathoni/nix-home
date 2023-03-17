@@ -17,6 +17,15 @@
     "yadm"
   ];
 
+  # Prefer installing application from the Mac App Store
+  #
+  # Commented apps suffer continual update issue:
+  # https://github.com/malob/nixpkgs/issues/9
+  homebrew.masApps = {
+    "Xcode" = 497799835;
+  };
+
+
   # List of Homebrew casks to install.
   # https://daiderd.com/nix-darwin/manual/index.html#opt-homebrew.casks
   homebrew.casks = [
