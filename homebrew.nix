@@ -26,6 +26,7 @@
     "gpg-suite-no-mail"
     "karabiner-elements"
     "lastpass"
+    "microsoft-edge"
     "rectangle"
     "visual-studio-code"
     "warp"
