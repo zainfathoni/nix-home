@@ -22,6 +22,7 @@
   # Commented apps suffer continual update issue:
   # https://github.com/malob/nixpkgs/issues/9
   homebrew.masApps = {
+    "Microsoft 365" = 1450038993;
     "Xcode" = 497799835;
   };
 
