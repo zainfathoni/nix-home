@@ -39,6 +39,7 @@
     "lastpass"
     "microsoft-edge"
     "rectangle"
+    "spotify"
     "visual-studio-code"
     "warp"
     "zoom"
