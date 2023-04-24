@@ -32,6 +32,7 @@
   homebrew.casks = [
     "actual"
     "around"
+    "daisydisk"
     "gitkraken"
     "gpg-suite-no-mail"
     "karabiner-elements"
