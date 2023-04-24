@@ -42,6 +42,7 @@
     "spotify"
     "visual-studio-code"
     "warp"
+    "zed"
     "zoom"
   ];
 }
