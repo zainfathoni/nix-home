@@ -41,5 +41,6 @@
     "rectangle"
     "visual-studio-code"
     "warp"
+    "zoom"
   ];
 }
