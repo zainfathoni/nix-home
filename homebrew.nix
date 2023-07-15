@@ -39,6 +39,7 @@
     "karabiner-elements"
     "lastpass"
     "microsoft-edge"
+    "raycast"
     "rectangle"
     "spotify"
     "visual-studio-code"
