@@ -11,9 +11,14 @@
   # https://daiderd.com/nix-darwin/manual/index.html#opt-homebrew.global.brewfile
   homebrew.global.brewfile = true;
 
+  homebrew.taps = [
+    "oven-sh/bun"
+  ];
+
   # List of Homebrew formulae to install.
   # https://daiderd.com/nix-darwin/manual/index.html#opt-homebrew.brews
   homebrew.brews = [
+    "bun"
     "deno"
     "volta"
     "yadm"
