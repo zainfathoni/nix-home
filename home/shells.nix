@@ -14,6 +14,14 @@
     npush = ''nix build .#darwinConfigurations.zain.system --json \
       | jq -r '.[].outputs | to_entries[].value' \
       | cachix push zain'';
+    
+    # Netlify URL Shorteners
+    zainf = "node $HOME/Code/GitHub/zainfathoni/shortener/node_modules/.bin/netlify-shortener";
+    rbagi = "node $HOME/Code/GitHub/zainfathoni/rbagi.id/node_modules/.bin/netlify-shortener";
+    imas = "node $HOME/Code/GitHub/zainfathoni/s.imas.sg/node_modules/.bin/netlify-shortener";
+    kcovid = "node $HOME/Code/GitLab/kawalcovid19/website/kcov.id/node_modules/.bin/netlify-shortener";
+    feid = "node $HOME/Code/GitHub/frontend-id/s.feid.dev/node_modules/.bin/netlify-shortener";
+    react = "node $HOME/Code/GitHub/reactjs-id/shortlinks/node_modules/.bin/netlify-shortener";
 
     # Frequently used Brew commands
     bl = "brew list -1";
