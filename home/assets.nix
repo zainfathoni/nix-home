@@ -9,6 +9,9 @@ let
   nixConfigDirectory = "/Users/zain/Code/GitHub/zainfathoni/nix-home";
 in
 {
+  # Symlink scripts directory altogether
+  home.file."scripts".source = mkOutOfStoreSymlink "${nixConfigDirectory}/assets/scripts";
+
   # Symlink Warp workflows
   home.file.".warp".source = mkOutOfStoreSymlink "${nixConfigDirectory}/assets/.warp";
 }
