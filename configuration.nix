@@ -24,6 +24,12 @@
   # system.keyboard.enableKeyMapping = true;
   # https://daiderd.com/nix-darwin/manual/index.html#opt-system.keyboard.remapCapsLockToEscape
   # system.keyboard.remapCapsLockToEscape = true;
+
+  # Explicitly set the home directory for the user.
+  # https://github.com/nix-community/home-manager/issues/4026#issuecomment-1565487545
+  # https://github.com/nix-community/home-manager/issues/4026#issuecomment-1565974702
+  # https://daiderd.com/nix-darwin/manual/index.html#opt-users.users._name_.home
+  users.users.zain.home = "/Users/zain";
   
   # Fonts
   fonts = {
