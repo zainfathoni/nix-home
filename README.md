@@ -12,6 +12,9 @@ and `home-manager`.
     - [3. Build Nix stores](#3-build-nix-stores)
     - [4. Switch to the built Nix stores](#4-switch-to-the-built-nix-stores)
     - [5. Decrypt secrets](#5-decrypt-secrets)
+  - [Updates](#updates)
+    - [1. Find the latest stable version of Nix](#1-find-the-latest-stable-version-of-nix)
+    - [2. Update flake.lock file](#2-update-flakelock-file)
   - [References](#references)
 
 ## Installation
@@ -71,6 +74,27 @@ the secrets.
 git clone https://github.com/zainfathoni/nix-home.git
 yadm decrypt
 # enter the passphrase (if prompted)
+```
+
+## Updates
+
+Here's how to update the Nix registry to the latest versions.
+
+### 1. Find the latest stable version of Nix
+
+Visit [Nix official website](https://nixos.org/) and find the latest stable
+version on the home page. Once you find the latest version, update all versions
+in [flake.nix](./flake.nix) and [default.nix](./home/default.nix) files
+accordingly.
+
+### 2. Update flake.lock file
+
+If you change nix dependencies, it's better to update the `flake.lock` file
+accordingly. You can do it by using either of these commands:
+
+```shell
+$ nix build --recreate-lock-file .#darwinConfigurations.zain.system
+$ nix flake update ~/.config/nixpkgs/
 ```
 
 ## References
