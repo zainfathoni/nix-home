@@ -24,4 +24,15 @@
   # system.keyboard.enableKeyMapping = true;
   # https://daiderd.com/nix-darwin/manual/index.html#opt-system.keyboard.remapCapsLockToEscape
   # system.keyboard.remapCapsLockToEscape = true;
+  
+  # Fonts
+  fonts = {
+    fontDir.enable = true;
+    fonts = with pkgs; [
+      fira
+      fira-code
+      fira-code-symbols
+      (nerdfonts.override { fonts = [ "JetBrainsMono" "FiraCode" "Hack" ]; })
+    ];
+  };
 }
