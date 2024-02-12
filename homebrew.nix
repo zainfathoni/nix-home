@@ -49,6 +49,7 @@
     "lastpass"
     "microsoft-edge"
     "notion-calendar"
+    "obsidian"
     "raycast"
     "rectangle"
     "spotify"
