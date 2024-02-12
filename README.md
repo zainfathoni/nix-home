@@ -41,6 +41,9 @@ We need to [install Homebrew manually](https://brew.sh) because
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
 
+> **Note**:
+> Restart the machine if you [experience issues with downloading Homebrew](https://github.com/orgs/Homebrew/discussions/3343#discussioncomment-3628470).
+
 ### 2. Clone Repository
 
 Clone this repository using HTTPS (because, at this point, we can't expect the
@@ -54,6 +57,15 @@ git clone https://github.com/zainfathoni/nix-home.git
 
 ```shell
 nix build .#darwinConfigurations.zain.system
+```
+
+#### 3.1. Backup the existing `nix.conf` file
+
+Before continuing, backup the existing `/etc/nix/nix.conf` file from the initial Nix installation by running these commands.
+
+```shell
+cd /etc/nix
+sudo mv nix.conf nix.conf.before-nix-darwin
 ```
 
 ### 4. Switch to the built Nix stores
