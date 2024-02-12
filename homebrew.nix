@@ -12,7 +12,6 @@
   homebrew.global.brewfile = true;
 
   homebrew.taps = [
-    "homebrew/cask-drivers"
     "homebrew/cask-fonts"
     "homebrew/cask-versions"
     "homebrew/services"
@@ -42,13 +41,13 @@
   homebrew.casks = [
     "actual"
     "around"
-    "cron"
     "daisydisk"
     "gitkraken"
     "gpg-suite-no-mail"
     "karabiner-elements"
     "lastpass"
     "microsoft-edge"
+    "notion-calendar"
     "raycast"
     "rectangle"
     "spotify"
