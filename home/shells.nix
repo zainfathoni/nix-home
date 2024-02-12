@@ -1,7 +1,7 @@
 { pkgs, ... }:
 
 {
-  # https://nix-community.github.io/home-manager/options.html#opt-home.shellAliases
+  # https://nix-community.github.io/home-manager/options.xhtml#opt-programs.zsh.shellAliases
   # Shell aliases that is compatible across all shells
   home.shellAliases = {
     # Frequently used Nix scripts
@@ -50,7 +50,7 @@
 
   programs = {
     # Z Shell (Default shell)
-      # https://nix-community.github.io/home-manager/options.html#opt-programs.zsh.enable
+    # https://nix-community.github.io/home-manager/options.xhtml#opt-programs.zsh.enable
     zsh.enable = true;
 
 
