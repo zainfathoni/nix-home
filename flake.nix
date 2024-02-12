@@ -44,5 +44,9 @@
           }
       ];
     };
+
+    # Set Nix formatter
+    # https://nixos.org/manual/nix/unstable/command-ref/new-cli/nix3-fmt#examples
+    formatter.aarch64-darwin = nixpkgs.legacyPackages.aarch64-darwin.nixpkgs-fmt;
   };
 }
