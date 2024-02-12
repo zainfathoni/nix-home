@@ -21,5 +21,8 @@
   # The set of packages to appear in the user environment
   # https://nix-community.github.io/home-manager/options.html#opt-home.packages
   home.packages = with pkgs; [
+    # Nix Formatter being used by VS Code
+    # https://discourse.nixos.org/t/error-with-integration-with-vscode/20848/2
+    nixpkgs-fmt
   ];
 }
