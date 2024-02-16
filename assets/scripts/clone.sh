@@ -20,35 +20,35 @@ echo ""
 if [[ ! -d "$GITHUB/zainfathoni/shortener" ]] ; then
   git clone git@github.com:zainfathoni/shortener.git $GITHUB/zainfathoni/shortener
   cd $GITHUB/zainfathoni/shortener
-  yarn
+  pnpm install
 fi
 
 if [[ ! -d "$GITHUB/zainfathoni/rbagi.id" ]] ; then
   git clone git@github.com:zainfathoni/rbagi.id.git $GITHUB/zainfathoni/rbagi.id
   cd $GITHUB/zainfathoni/rbagi.id
-  yarn
+  pnpm install
 fi
 
-if [[ ! -d "$GITHUB/zainfathoni/s.imas.sg" ]] ; then
-  git clone git@github.com:zainfathoni/s.imas.sg.git $GITHUB/zainfathoni/s.imas.sg
-  cd $GITHUB/zainfathoni/s.imas.sg
-  yarn
+if [[ ! -d "$GITHUB/imas-sg/s.imas.sg" ]] ; then
+  git clone git@github.com:imas-sg/s.imas.sg.git $GITHUB/imas-sg/s.imas.sg
+  cd $GITHUB/imas-sg/s.imas.sg
+  pnpm install
 fi
 
 if [[ ! -d "$GITLAB/kawalcovid19/website/kcov.id" ]] ; then
   git clone git@gitlab.com:kawalcovid19/website/kcov.id.git $GITLAB/kawalcovid19/website/kcov.id
   cd $GITLAB/kawalcovid19/website/kcov.id
-  yarn
+  pnpm install
 fi
 
 if [[ ! -d "$GITHUB/frontend-id/s.feid.dev" ]] ; then
   git clone git@github.com:frontend-id/s.feid.dev.git $GITHUB/frontend-id/s.feid.dev
   cd $GITHUB/frontend-id/s.feid.dev
-  yarn
+  pnpm install
 fi
 
 if [[ ! -d "$GITHUB/reactjs-id/shortlinks" ]] ; then
   git clone git@github.com:reactjs-id/shortlinks.git $GITHUB/reactjs-id/shortlinks
   cd $GITHUB/reactjs-id/shortlinks
-  yarn
+  pnpm install
 fi
