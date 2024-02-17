@@ -23,6 +23,7 @@
   homebrew.brews = [
     "bun"
     "deno"
+    "gh"
     "volta"
     "yadm"
   ];
