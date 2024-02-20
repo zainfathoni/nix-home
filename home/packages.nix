@@ -36,6 +36,12 @@
     ##################################
     # Nix-related packages
     ##################################
+    cachix # to store cache binaries on cachix.org
     nix-prefetch-git # to get git signatures for fetchFromGit
+
+    ##################################
+    # Utilities
+    ##################################
+    jq # JSON in shell
   ];
 }
