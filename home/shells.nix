@@ -53,6 +53,21 @@
     # https://nix-community.github.io/home-manager/options.xhtml#opt-programs.zsh.enable
     zsh.enable = true;
 
+    # Z Shell plugins
+    # https://nix-community.github.io/home-manager/options.xhtml#opt-programs.zsh.plugins
+    zsh.plugins = [
+      {
+        name = "zsh-z";
+        file = "zsh-z.plugin.zsh";
+        src = pkgs.fetchFromGitHub {
+          owner = "agkozak";
+          repo = "zsh-z";
+          rev = "afaf2965b41fdc6ca66066e09382726aa0b6aa04";
+          sha256 = "1s23azd9hk57dgya0xrqh16jq1qbmm0n70x32mxg8b29ynks6w8n";
+        };
+      }
+    ];
+
 
     # Style Z Shell using Starship, a cross-shell prompt
     # https://starship.rs
