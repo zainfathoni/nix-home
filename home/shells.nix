@@ -81,10 +81,6 @@
 
         ## Warp compatibility
         # https://docs.warp.dev/appearance/prompt#starship-settings
-        # Disables the custom module
-        custom = {
-          disabled = false;
-        };
         # Disable the multi-line prompt in Starship
         line_break = {
           disabled = true;
