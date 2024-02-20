@@ -24,5 +24,10 @@
     # Nix Formatter being used by VS Code
     # https://discourse.nixos.org/t/error-with-integration-with-vscode/20848/2
     nixpkgs-fmt
+
+    ##################################
+    # Nix-related packages
+    ##################################
+    nix-prefetch-git # to get git signatures for fetchFromGit
   ];
 }
