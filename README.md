@@ -6,8 +6,8 @@ and `home-manager`.
 - [nix-home](#nix-home)
   - [Installation](#installation)
     - [1. Install Dependencies](#1-install-dependencies)
-      - [Install Nix](#install-nix)
-      - [Install Homebrew](#install-homebrew)
+      - [1.1. Install Nix](#11-install-nix)
+      - [1.2. Install Homebrew](#12-install-homebrew)
     - [2. Clone Repository](#2-clone-repository)
     - [3. Build Nix stores](#3-build-nix-stores)
       - [3.1. Backup the existing `nix.conf` file](#31-backup-the-existing-nixconf-file)
@@ -25,7 +25,7 @@ and `home-manager`.
 
 ### 1. Install Dependencies
 
-#### Install Nix
+#### 1.1. Install Nix
 
 Install Nix using
 [nix-installer](https://zero-to-nix.com/concepts/nix-installer). Read more about
@@ -36,7 +36,7 @@ it in the
 curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
 ```
 
-#### Install Homebrew
+#### 1.2. Install Homebrew
 
 We need to [install Homebrew manually](https://brew.sh) because
 [`nix-darwin` won't handle Homebrew installation itself](https://daiderd.com/nix-darwin/manual/index.html#opt-homebrew.enable).
