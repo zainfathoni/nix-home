@@ -40,6 +40,11 @@
     nix-prefetch-git # to get git signatures for fetchFromGit
 
     ##################################
+    # Containerization
+    ##################################
+    docker
+
+    ##################################
     # Utilities
     ##################################
     jq # JSON in shell
