@@ -118,8 +118,7 @@ If you change nix dependencies, it's better to update the `flake.lock` file
 accordingly. You can do it by using either of these commands:
 
 ```shell
-$ nix build --recreate-lock-file .#darwinConfigurations.zain.system
-$ nix flake update ~/.config/nixpkgs/
+$ nix flake update # run this when you're inside the root directory of this nix-home repository
 ```
 
 ## Additional Scripts
