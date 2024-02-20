@@ -14,7 +14,7 @@
     npush = ''nix build .#darwinConfigurations.zain.system --json \
       | jq -r '.[].outputs | to_entries[].value' \
       | cachix push zain'';
-    
+
     # Netlify URL Shorteners
     zainf = "node $HOME/Code/GitHub/zainfathoni/shortener/node_modules/.bin/netlify-shortener";
     rbagi = "node $HOME/Code/GitHub/zainfathoni/rbagi.id/node_modules/.bin/netlify-shortener";
@@ -71,12 +71,25 @@
 
     # Style Z Shell using Starship, a cross-shell prompt
     # https://starship.rs
+    # https://nix-community.github.io/home-manager/options.xhtml#opt-programs.starship.enable
     starship = {
       enable = true;
       enableZshIntegration = true;
       settings = {
-        add_newline = true;
+        add_newline = false;
         command_timeout = 1000;
+
+        ## Warp compatibility
+        # https://docs.warp.dev/appearance/prompt#starship-settings
+        # Disables the custom module
+        custom = {
+          disabled = false;
+        };
+        # Disable the multi-line prompt in Starship
+        line_break = {
+          disabled = true;
+        };
+
         cmd_duration = {
           format = " [$duration]($style) ";
           style = "bold #EC7279";
@@ -172,3 +185,6 @@
     };
   };
 }
+
+
+
