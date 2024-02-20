@@ -10,11 +10,15 @@ and `home-manager`.
       - [Install Homebrew](#install-homebrew)
     - [2. Clone Repository](#2-clone-repository)
     - [3. Build Nix stores](#3-build-nix-stores)
+      - [3.1. Backup the existing `nix.conf` file](#31-backup-the-existing-nixconf-file)
     - [4. Switch to the built Nix stores](#4-switch-to-the-built-nix-stores)
-    - [5. Decrypt secrets](#5-decrypt-secrets)
+    - [5. Import GPG Keys](#5-import-gpg-keys)
+    - [6. Decrypt secrets](#6-decrypt-secrets)
   - [Updates](#updates)
     - [1. Find the latest stable version of Nix](#1-find-the-latest-stable-version-of-nix)
     - [2. Update flake.lock file](#2-update-flakelock-file)
+  - [Additional Scripts](#additional-scripts)
+    - [Fetch packages from GitHub](#fetch-packages-from-github)
   - [References](#references)
 
 ## Installation
@@ -41,8 +45,8 @@ We need to [install Homebrew manually](https://brew.sh) because
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
 
-> **Note**:
-> Restart the machine if you [experience issues with downloading Homebrew](https://github.com/orgs/Homebrew/discussions/3343#discussioncomment-3628470).
+> **Note**: Restart the machine if you
+> [experience issues with downloading Homebrew](https://github.com/orgs/Homebrew/discussions/3343#discussioncomment-3628470).
 
 ### 2. Clone Repository
 
@@ -61,7 +65,8 @@ nix build .#darwinConfigurations.zain.system
 
 #### 3.1. Backup the existing `nix.conf` file
 
-Before continuing, backup the existing `/etc/nix/nix.conf` file from the initial Nix installation by running these commands.
+Before continuing, backup the existing `/etc/nix/nix.conf` file from the initial
+Nix installation by running these commands.
 
 ```shell
 cd /etc/nix
@@ -115,6 +120,16 @@ accordingly. You can do it by using either of these commands:
 ```shell
 $ nix build --recreate-lock-file .#darwinConfigurations.zain.system
 $ nix flake update ~/.config/nixpkgs/
+```
+
+## Additional Scripts
+
+### Fetch packages from GitHub
+
+Get `rev` & `sha256` values for packages fetched from GitHub.
+
+```shell
+$ nix-prefetch-git <github-repository-url>
 ```
 
 ## References
