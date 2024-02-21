@@ -47,7 +47,6 @@
     "gitkraken"
     "gpg-suite-no-mail"
     "karabiner-elements"
-    "lastpass"
     "microsoft-edge"
     "notion-calendar"
     "obsidian"
