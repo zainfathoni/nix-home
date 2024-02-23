@@ -15,6 +15,10 @@
     extra-nix-path = nixpkgs=flake:nixpkgs
   '';
 
+  # Add trusted users to include the per-user paths in the PATH environment variable
+  # https://daiderd.com/nix-darwin/manual/index.html#opt-nix.settings.trusted-users
+  nix.settings.trusted-users = [ "root" "zain" ];
+
   # Add trusted substituters
   # I grabbed the public key from https://app.cachix.org/cache/zain#pull
   # Example: https://github.com/LnL7/nix-darwin/blob/0e6857fa1d632637488666c08e7b02c08e3178f8/modules/examples/lnl.nix#L97-L98
