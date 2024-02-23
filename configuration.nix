@@ -31,6 +31,9 @@
   # https://daiderd.com/nix-darwin/manual/index.html#opt-system.keyboard.remapCapsLockToEscape
   # system.keyboard.remapCapsLockToEscape = true;
 
+  # https://daiderd.com/nix-darwin/manual/index.html#opt-nix.configureBuildUsers
+  nix.configureBuildUsers = true;
+
   # Explicitly set the home directory for the user.
   # https://github.com/nix-community/home-manager/issues/4026#issuecomment-1565487545
   # https://github.com/nix-community/home-manager/issues/4026#issuecomment-1565974702

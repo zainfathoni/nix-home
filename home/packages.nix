@@ -17,7 +17,7 @@
     # Therefore, I'm adding it manually
     # https://nix-community.github.io/home-manager/index.xhtml#sec-flakes-nix-darwin-module
     # FIXME: Remove this once the issue is fixed
-    "/etc/profiles/per-user/zain/bin"
+    # "/etc/profiles/per-user/zain/bin"
 
     # Volta
     "$VOLTA_HOME/bin"
