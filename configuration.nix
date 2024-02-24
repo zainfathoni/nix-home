@@ -37,6 +37,7 @@
   # https://daiderd.com/nix-darwin/manual/index.html#opt-users.users._name_.home
   users.users.zain.home = "/Users/zain";
 
+  nix.settings.trusted-users = [ "root" "zain" ];
   nix.configureBuildUsers = true;
   environment.shells = [ pkgs.zsh ];
 
