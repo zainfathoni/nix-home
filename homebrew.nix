@@ -44,6 +44,7 @@
     "arc"
     "around"
     "daisydisk"
+    "discord"
     "gitkraken"
     "gpg-suite-no-mail"
     "karabiner-elements"
