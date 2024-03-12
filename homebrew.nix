@@ -25,6 +25,7 @@
     "bun"
     "deno"
     "gh"
+    "mkcert"
     "volta"
     "yadm"
   ];
