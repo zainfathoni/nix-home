@@ -23,6 +23,7 @@
   homebrew.brews = [
     "awscli"
     "bun"
+    "colima"
     "deno"
     "gh"
     "mkcert"
