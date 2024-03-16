@@ -48,6 +48,7 @@
     "around"
     "daisydisk"
     "discord"
+    "docker"
     "gitkraken"
     "gpg-suite-no-mail"
     "karabiner-elements"
