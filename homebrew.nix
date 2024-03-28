@@ -53,6 +53,7 @@
     "gpg-suite-no-mail"
     "karabiner-elements"
     "microsoft-edge"
+    "notion"
     "notion-calendar"
     "obsidian"
     "raycast"
