@@ -26,6 +26,7 @@
     "colima"
     "deno"
     "gh"
+    "graphviz"
     "mkcert"
     "volta"
     "yadm"
