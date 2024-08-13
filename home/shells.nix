@@ -19,7 +19,7 @@
     zainf = "$HOME/Code/GitHub/zainfathoni/shortener/cli.js";
     rbagi = "$HOME/Code/GitHub/zainfathoni/rbagi.id/cli.js";
     imas = "$HOME/Code/GitHub/imas-sg/s.imas.sg/cli.js";
-    kcovid = "node $HOME/Code/GitLab/kawalcovid19/website/kcov.id/node_modules/.bin/netlify-shortener";
+    kcovid = "$HOME/Code/GitLab/kawalcovid19/website/kcov.id/cli.js";
     feid = "node $HOME/Code/GitHub/frontend-id/s.feid.dev/node_modules/.bin/netlify-shortener";
     react = "node $HOME/Code/GitHub/reactjs-id/shortlinks/node_modules/.bin/netlify-shortener";
 
