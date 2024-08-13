@@ -21,7 +21,7 @@
     imas = "$HOME/Code/GitHub/imas-sg/s.imas.sg/cli.js";
     kcovid = "$HOME/Code/GitLab/kawalcovid19/website/kcov.id/cli.js";
     feid = "$HOME/Code/GitHub/frontend-id/s.feid.dev/cli.js";
-    react = "node $HOME/Code/GitHub/reactjs-id/shortlinks/node_modules/.bin/netlify-shortener";
+    react = "$HOME/Code/GitHub/reactjs-id/shortlinks/cli.js";
 
     # Frequently used Brew commands
     bl = "brew list -1";
