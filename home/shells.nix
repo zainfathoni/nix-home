@@ -18,7 +18,7 @@
     # Netlify URL Shorteners
     zainf = "$HOME/Code/GitHub/zainfathoni/shortener/cli.js";
     rbagi = "$HOME/Code/GitHub/zainfathoni/rbagi.id/cli.js";
-    imas = "node $HOME/Code/GitHub/zainfathoni/s.imas.sg/node_modules/.bin/netlify-shortener";
+    imas = "$HOME/Code/GitHub/imas-sg/s.imas.sg/cli.js";
     kcovid = "node $HOME/Code/GitLab/kawalcovid19/website/kcov.id/node_modules/.bin/netlify-shortener";
     feid = "node $HOME/Code/GitHub/frontend-id/s.feid.dev/node_modules/.bin/netlify-shortener";
     react = "node $HOME/Code/GitHub/reactjs-id/shortlinks/node_modules/.bin/netlify-shortener";
