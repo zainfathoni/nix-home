@@ -16,7 +16,7 @@
       | cachix push zain'';
 
     # Netlify URL Shorteners
-    zainf = "node $HOME/Code/GitHub/zainfathoni/shortener/node_modules/.bin/netlify-shortener";
+    zainf = "$HOME/Code/GitHub/zainfathoni/shortener/cli.js";
     rbagi = "node $HOME/Code/GitHub/zainfathoni/rbagi.id/node_modules/.bin/netlify-shortener";
     imas = "node $HOME/Code/GitHub/zainfathoni/s.imas.sg/node_modules/.bin/netlify-shortener";
     kcovid = "node $HOME/Code/GitLab/kawalcovid19/website/kcov.id/node_modules/.bin/netlify-shortener";
