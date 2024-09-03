@@ -28,6 +28,7 @@
     "gh"
     "graphviz"
     "mkcert"
+    "ruby"
     "volta"
     "yadm"
   ];
