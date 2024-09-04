@@ -68,6 +68,9 @@
       }
     ];
 
+    zsh.initExtra = ''
+      eval "$(rbenv init - zsh)"
+    '';
 
     # Style Z Shell using Starship, a cross-shell prompt
     # https://starship.rs
