@@ -70,6 +70,7 @@
 
     zsh.initExtra = ''
       eval "$(rbenv init - zsh)"
+      PROMPT="$PROMPT$'\n'"
     '';
 
     # Style Z Shell using Starship, a cross-shell prompt
