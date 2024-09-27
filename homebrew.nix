@@ -48,6 +48,7 @@
     "actual"
     "arc"
     "around"
+    "bruno"
     "daisydisk"
     "discord"
     "docker"
