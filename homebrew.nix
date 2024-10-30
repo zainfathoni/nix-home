@@ -53,6 +53,7 @@
     "docker"
     "gitkraken"
     "gpg-suite-no-mail"
+    "logi-options+"
     "karabiner-elements"
     "microsoft-edge"
     "notion"
