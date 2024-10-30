@@ -24,6 +24,9 @@
 
     # pnpm
     "$HOME/.pnpm-global/bin"
+
+    # Cloud 66
+    "/opt/cloud66/bin"
   ];
 
   # The set of packages to appear in the user environment
