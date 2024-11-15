@@ -97,6 +97,8 @@ the secrets.
 
 ```shell
 yadm clone https://github.com/zainfathoni/yadm-home.git
+# if necessary, run this command to restore all checked out YADM files after cloning
+yadm reset --hard HEAD
 yadm decrypt
 # enter the passphrase (if prompted)
 ```
