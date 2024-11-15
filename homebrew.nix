@@ -12,8 +12,6 @@
   homebrew.global.brewfile = true;
 
   homebrew.taps = [
-    "homebrew/cask-fonts"
-    "homebrew/cask-versions"
     "homebrew/services"
     "oven-sh/bun"
   ];
