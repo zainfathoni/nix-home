@@ -59,6 +59,7 @@
     "obsidian"
     "raycast"
     "rectangle"
+    "slack"
     "spotify"
     "visual-studio-code"
     "warp"
