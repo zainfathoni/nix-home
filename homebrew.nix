@@ -44,7 +44,6 @@
   # https://daiderd.com/nix-darwin/manual/index.html#opt-homebrew.casks
   homebrew.casks = [
     "arc"
-    "around"
     "bruno"
     "daisydisk"
     "discord"
@@ -57,8 +56,6 @@
     "notion"
     "notion-calendar"
     "obsidian"
-    "raycast"
-    "rectangle"
     "slack"
     "spotify"
     "visual-studio-code"
