@@ -43,6 +43,7 @@
   # List of Homebrew casks to install.
   # https://daiderd.com/nix-darwin/manual/index.html#opt-homebrew.casks
   homebrew.casks = [
+    "actual"
     "arc"
     "bruno"
     "daisydisk"
