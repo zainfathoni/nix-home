@@ -46,6 +46,7 @@
     "actual"
     "arc"
     "bruno"
+    "chatgpt"
     "daisydisk"
     "discord"
     "docker"
