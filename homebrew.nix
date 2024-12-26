@@ -54,6 +54,7 @@
     "gpg-suite-no-mail"
     "logi-options+"
     "karabiner-elements"
+    "nordvpn"
     "notion"
     "notion-calendar"
     "obsidian"
