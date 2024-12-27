@@ -51,6 +51,7 @@
     "discord"
     "docker"
     "gitkraken"
+    "google-chrome@canary"
     "gpg-suite-no-mail"
     "logi-options+"
     "karabiner-elements"
