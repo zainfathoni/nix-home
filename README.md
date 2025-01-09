@@ -48,13 +48,26 @@ We need to [install Homebrew manually](https://brew.sh) because
 > **Note**: Restart the machine if you
 > [experience issues with downloading Homebrew](https://github.com/orgs/Homebrew/discussions/3343#discussioncomment-3628470).
 
+Once the installation is complete, follow the instructions to add Homebrew to the
+`PATH` environment variable.
+
+```shell
+echo >> /Users/zain/.zprofile
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> /Users/zain/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+
 ### 2. Clone Repository
 
 Clone this repository using HTTPS (because, at this point, we can't expect the
 new machine to have SSH set up).
 
 ```shell
+cd ~/Code
+mkdir GitHub && cd GitHub
+mkdir zainfathoni && cd zainfathoni
 git clone https://github.com/zainfathoni/nix-home.git
+cd nix-home
 ```
 
 ### 3. Build Nix stores
@@ -79,6 +92,7 @@ Running the build result would also run the `brew bundle` command, which will
 install Brew packages defined in this repository.
 
 ```shell
+cd ~/Code/GitHub/zainfathoni/nix-home
 ./result/sw/bin/darwin-rebuild switch --flake .#zain
 ```
 
@@ -96,11 +110,22 @@ Once `yadm` is installed using the command above, we can use `yadm` to decrypt
 the secrets.
 
 ```shell
+cd ~/Code/GitHub/zainfathoni
 yadm clone https://github.com/zainfathoni/yadm-home.git
+cd yadm-home
 # if necessary, run this command to restore all checked out YADM files after cloning
 yadm reset --hard HEAD
 yadm decrypt
 # enter the passphrase (if prompted)
+```
+
+### 7. Set `nix-home` remote URL to use SSH
+
+Now that we have the SSH keys set up, we can change the remote URL to use SSH.
+
+```shell
+cd ~/Code/GitHub/zainfathoni/nix-home
+git remote set-url origin
 ```
 
 ## Updates
