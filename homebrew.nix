@@ -59,7 +59,6 @@
     "notion"
     "notion-calendar"
     "obsidian"
-    "orion"
     "slack"
     "spotify"
     "visual-studio-code"
