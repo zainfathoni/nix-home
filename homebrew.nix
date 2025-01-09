@@ -24,7 +24,6 @@
     "colima"
     "deno"
     "gh"
-    "graphviz"
     "mkcert"
     "rbenv"
     "volta"
