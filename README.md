@@ -96,6 +96,17 @@ cd ~/Code/GitHub/zainfathoni/nix-home
 ./result/sw/bin/darwin-rebuild switch --flake .#zain
 ```
 
+Stand by to type the password when prompted. At least these casks would require the password:
+
+- `docker`
+- `gpg-suite-no-mail`
+- `logi-options+`
+- `karabiner-elements`
+- `nordvpn`
+- `zoom`
+
+And by the end of the Homebrew installation, the `nix-darwin` will ask for the password to apply all the changes.
+
 ### 5. Import GPG Keys
 
 Import GPG Keys from my password manager.
@@ -110,9 +121,7 @@ Once `yadm` is installed using the command above, we can use `yadm` to decrypt
 the secrets.
 
 ```shell
-cd ~/Code/GitHub/zainfathoni
 yadm clone https://github.com/zainfathoni/yadm-home.git
-cd yadm-home
 # if necessary, run this command to restore all checked out YADM files after cloning
 yadm reset --hard HEAD
 yadm decrypt
@@ -125,7 +134,7 @@ Now that we have the SSH keys set up, we can change the remote URL to use SSH.
 
 ```shell
 cd ~/Code/GitHub/zainfathoni/nix-home
-git remote set-url origin
+git remote set-url origin git@github.com:zainfathoni/nix-home.git
 ```
 
 ## Updates
