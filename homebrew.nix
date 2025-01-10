@@ -27,6 +27,7 @@
     "mkcert"
     "mysql"
     "rbenv"
+    "shared-mime-info"
     "volta"
     "yadm"
   ];
