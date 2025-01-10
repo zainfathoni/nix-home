@@ -35,6 +35,10 @@
   # Commented apps suffer continual update issue:
   # https://github.com/malob/nixpkgs/issues/9
   homebrew.masApps = {
+    "1Password for Safari" = 1569813296;
+    "Speedtest" = 1153157709;
+    "Telegram" = 747648890;
+    "WhatsApp" = 310633997;
     "Xcode" = 497799835;
   };
 
