@@ -25,6 +25,7 @@
     "deno"
     "gh"
     "mkcert"
+    "mysql"
     "rbenv"
     "volta"
     "yadm"
