@@ -137,6 +137,12 @@ cd ~/Code/GitHub/zainfathoni/nix-home
 git remote set-url origin git@github.com:zainfathoni/nix-home.git
 ```
 
+### 8. Clone URL shortener repositories
+
+```shell
+~/scripts/clone.sh
+```
+
 ## Updates
 
 Here's how to update the Nix registry to the latest versions.
