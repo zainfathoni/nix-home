@@ -140,6 +140,9 @@ git remote set-url origin git@github.com:zainfathoni/nix-home.git
 ### 8. Clone URL shortener repositories
 
 ```shell
+volta install node
+volta install yarn@1
+volta install pnpm
 ~/scripts/clone.sh
 ```
 
