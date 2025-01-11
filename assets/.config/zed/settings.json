@@ -7,12 +7,23 @@
 // custom settings, run `zed: open default settings` from the
 // command palette (cmd-shift-p / ctrl-shift-p)
 {
+  "autosave": "on_window_change",
   "vim_mode": true,
   "ui_font_size": 14,
   "buffer_font_size": 11,
+  "tabs": {
+    "file_icons": true,
+    "git_status": true
+  },
   "theme": {
     "mode": "system",
     "light": "One Light",
     "dark": "One Dark"
+  },
+  "auto_install_extensions": {
+    "html": true,
+    "nix": true,
+    "dockerfile": true,
+    "docker-compose": false
   }
 }
