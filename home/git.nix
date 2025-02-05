@@ -38,6 +38,11 @@ in
       };
 
       diff-so-fancy.enable = true;
+
+      extraConfig = {
+        # See https://git-scm.com/book/en/v2/Git-Tools-Rerere
+        rerere.enabled = true;
+      };
     };
   };
 }
