@@ -14,6 +14,7 @@
   homebrew.taps = [
     "homebrew/services"
     "oven-sh/bun"
+    "shopify/shopify"
   ];
 
   # List of Homebrew formulae to install.
@@ -26,6 +27,7 @@
     "gh"
     "mkcert"
     "rbenv"
+    "shopify-cli"
     "volta"
     "yadm"
   ];
