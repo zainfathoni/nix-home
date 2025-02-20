@@ -55,6 +55,7 @@
     ##################################
     # Utilities
     ##################################
+    eza # A modern replacement for the `ls` command
     jq # JSON in shell
   ];
 }
