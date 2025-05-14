@@ -13,7 +13,7 @@
   # changes in each release.
 
   # https://nix-community.github.io/home-manager/options.html#opt-home.stateVersion
-  home.stateVersion = "23.11";
+  home.stateVersion = "24.11";
 
   # Let Home Manager install and manage itself.
   # https://nix-community.github.io/home-manager/options.html#opt-programs.home-manager.enable

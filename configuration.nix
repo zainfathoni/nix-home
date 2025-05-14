@@ -37,14 +37,7 @@
   # https://daiderd.com/nix-darwin/manual/index.html#opt-users.users._name_.home
   users.users.zain.home = "/Users/zain";
 
-  # Fonts
-  fonts = {
-    fontDir.enable = true;
-    fonts = with pkgs; [
-      fira
-      fira-code
-      fira-code-symbols
-      (nerdfonts.override { fonts = [ "JetBrainsMono" "FiraCode" "Hack" ]; })
-    ];
-  };
+  # nix-darwin system stateVersion
+  #@see https://mynixos.com/nix-darwin/option/system.stateVersion
+  system.stateVersion = 5;
 }
