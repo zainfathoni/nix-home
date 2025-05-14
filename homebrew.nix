@@ -24,6 +24,7 @@
     "bun"
     "colima"
     "deno"
+    "fabric-ai"
     "gh"
     "mkcert"
     "rbenv"
