@@ -15,6 +15,7 @@
     "homebrew/services"
     "oven-sh/bun"
     "shopify/shopify"
+    "sst/tap"
   ];
 
   # List of Homebrew formulae to install.
