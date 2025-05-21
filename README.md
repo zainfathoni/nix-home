@@ -7,6 +7,7 @@ and `home-manager`.
   - [Installation](#installation)
     - [1. Install Dependencies](#1-install-dependencies)
       - [1.1. Install Nix](#11-install-nix)
+        - [Alternative installation method](#alternative-installation-method)
       - [1.2. Install Homebrew](#12-install-homebrew)
     - [2. Clone Repository](#2-clone-repository)
     - [3. Build Nix stores](#3-build-nix-stores)
@@ -14,6 +15,8 @@ and `home-manager`.
     - [4. Switch to the built Nix stores](#4-switch-to-the-built-nix-stores)
     - [5. Import GPG Keys](#5-import-gpg-keys)
     - [6. Decrypt secrets](#6-decrypt-secrets)
+    - [7. Set `nix-home` remote URL to use SSH](#7-set-nix-home-remote-url-to-use-ssh)
+    - [8. Clone URL shortener repositories](#8-clone-url-shortener-repositories)
   - [Updates](#updates)
     - [1. Find the latest stable version of Nix](#1-find-the-latest-stable-version-of-nix)
     - [2. Update flake.lock file](#2-update-flakelock-file)
@@ -36,6 +39,11 @@ it in the
 curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
 ```
 
+##### Alternative installation method
+
+You can also install Nix using Determinate Systems' installer that is
+downloadable here <https://docs.determinate.systems/>.
+
 #### 1.2. Install Homebrew
 
 We need to [install Homebrew manually](https://brew.sh) because
@@ -48,8 +56,8 @@ We need to [install Homebrew manually](https://brew.sh) because
 > **Note**: Restart the machine if you
 > [experience issues with downloading Homebrew](https://github.com/orgs/Homebrew/discussions/3343#discussioncomment-3628470).
 
-Once the installation is complete, follow the instructions to add Homebrew to the
-`PATH` environment variable.
+Once the installation is complete, follow the instructions to add Homebrew to
+the `PATH` environment variable.
 
 ```shell
 echo >> /Users/zain/.zprofile
@@ -96,7 +104,8 @@ cd ~/Code/GitHub/zainfathoni/nix-home
 ./result/sw/bin/darwin-rebuild switch --flake .#zain
 ```
 
-Stand by to type the password when prompted. At least these casks would require the password:
+Stand by to type the password when prompted. At least these casks would require
+the password:
 
 - `docker`
 - `gpg-suite-no-mail`
@@ -105,7 +114,8 @@ Stand by to type the password when prompted. At least these casks would require 
 - `nordvpn`
 - `zoom`
 
-And by the end of the Homebrew installation, the `nix-darwin` will ask for the password to apply all the changes.
+And by the end of the Homebrew installation, the `nix-darwin` will ask for the
+password to apply all the changes.
 
 ### 5. Import GPG Keys
 
