@@ -24,6 +24,7 @@
     "bun"
     "colima"
     "deno"
+    "docker-credential-helper-ecr"
     "fabric-ai"
     "gh"
     "mkcert"
