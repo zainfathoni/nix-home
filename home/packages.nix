@@ -6,6 +6,7 @@
   home.sessionVariables = {
     VOLTA_HOME = "$HOME/.volta";
     PNPM_HOME = "$HOME/.pnpm-global/bin";
+    PYENV_ROOT = "$HOME/.pyenv";
   };
 
   # Extra directories to add to $PATH
@@ -27,6 +28,9 @@
 
     # Cloud 66
     "/opt/cloud66/bin"
+
+    # Pyenv
+    "$PYENV_ROOT/bin"
   ];
 
   # The set of packages to appear in the user environment

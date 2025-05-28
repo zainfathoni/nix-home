@@ -27,6 +27,7 @@
     "fabric-ai"
     "gh"
     "mkcert"
+    "pyenv"
     "rbenv"
     "shopify-cli"
     "volta"

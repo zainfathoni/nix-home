@@ -72,6 +72,7 @@
     ];
 
     zsh.initExtra = ''
+      eval "$(pyenv init - zsh)"
       eval "$(rbenv init - zsh)"
       PROMPT="$PROMPT$'\n'"
     '';
