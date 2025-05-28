@@ -46,6 +46,9 @@
     gcu = "git-crypt unlock";
     gcs = "git-crypt status";
     gcsf = "git-crypt status -f";
+
+    # Brew packgaes with different names
+    fabric = "fabric-ai";
   };
 
   programs = {
