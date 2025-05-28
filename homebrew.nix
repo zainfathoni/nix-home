@@ -30,6 +30,7 @@
     "pyenv"
     "rbenv"
     "shopify-cli"
+    "uv"
     "volta"
     "yadm"
   ];
