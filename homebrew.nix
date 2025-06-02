@@ -28,6 +28,7 @@
     "fabric-ai"
     "gh"
     "mkcert"
+    "mysql"
     "pyenv"
     "rbenv"
     "shopify-cli"
