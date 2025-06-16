@@ -62,6 +62,7 @@
     "daisydisk"
     "discord"
     "docker"
+    "firefox"
     "gitkraken"
     "google-chrome@canary"
     "gpg-suite-no-mail"
