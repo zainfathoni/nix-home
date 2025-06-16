@@ -78,6 +78,7 @@
     "visual-studio-code"
     "warp"
     "zed"
+    "zen"
     "zoom"
   ];
 }
