@@ -73,6 +73,7 @@
     "notion"
     "notion-calendar"
     "obsidian"
+    "rectangle"
     "slack"
     "spotify"
     "visual-studio-code"
