@@ -25,6 +25,9 @@
 
     # pnpm
     "$HOME/.pnpm-global/bin"
+    
+    # bun
+    "$HOME/.bun/bin"
 
     # Cloud 66
     "/opt/cloud66/bin"
