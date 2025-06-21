@@ -32,6 +32,7 @@
     "pyenv"
     "rbenv"
     "shopify-cli"
+    "sst/tap/opencode"
     "uv"
     "volta"
     "yadm"
