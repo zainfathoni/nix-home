@@ -65,7 +65,6 @@
     "daisydisk"
     "discord"
     "docker"
-    "firefox"
     "gitkraken"
     "google-chrome@canary"
     "gpg-suite-no-mail"
@@ -82,7 +81,6 @@
     "visual-studio-code"
     "warp"
     "zed"
-    "zen"
     "zoom"
   ];
 }
