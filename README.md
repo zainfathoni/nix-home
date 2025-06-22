@@ -4,6 +4,7 @@ This repository is a declarative macOS configuration using `nix`, `nix-darwin`,
 and `home-manager`.
 
 - [nix-home](#nix-home)
+  - [Architecture](#architecture)
   - [Installation](#installation)
     - [1. Install Dependencies](#1-install-dependencies)
       - [1.1. Install Nix](#11-install-nix)
@@ -23,6 +24,73 @@ and `home-manager`.
   - [Additional Scripts](#additional-scripts)
     - [Fetch packages from GitHub](#fetch-packages-from-github)
   - [References](#references)
+
+## Architecture
+
+This nix-home configuration follows a modular architecture that separates concerns between system-level configuration (nix-darwin), package management (Homebrew), and user-level configuration (home-manager).
+
+```mermaid
+graph LR
+    %% External Inputs
+    nixpkgs[📦 nixpkgs<br/>24.11-darwin]
+    darwin_input[🔧 nix-darwin<br/>24.11]
+    hm_input[🏠 home-manager<br/>release-24.11]
+    
+    %% Core Configuration
+    flake[⚡ flake.nix<br/>Entry Point]
+    
+    %% nix-darwin Configuration
+    config[🍎 configuration.nix<br/>System Settings]
+    homebrew[🍺 homebrew.nix<br/>Package Management]
+    
+    %% Home Manager Configuration
+    home_default[🏠 home/default.nix<br/>Home Manager Entry]
+    packages[📦 home/packages.nix<br/>User Packages]
+    git_config[🔀 home/git.nix<br/>Git Configuration]
+    shells[🐚 home/shells.nix<br/>Shell Configuration]
+    assets[📁 home/assets.nix<br/>Dotfiles & Assets]
+    
+    %% Darwin System Output
+    darwin_system[🚀 Darwin System<br/>zain Configuration]
+    
+    %% Relationships
+    nixpkgs --> flake
+    darwin_input --> flake
+    hm_input --> flake
+    
+    flake --> config
+    flake --> homebrew
+    flake --> home_default
+    
+    home_default --> packages
+    home_default --> git_config
+    home_default --> shells
+    home_default --> assets
+    
+    config --> darwin_system
+    homebrew --> darwin_system
+    home_default --> darwin_system
+    
+    %% Styling with high contrast colors
+    classDef input fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000000
+    classDef core fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000000
+    classDef darwin fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000000
+    classDef home fill:#e8f5e8,stroke:#388e3c,stroke-width:2px,color:#000000
+    classDef output fill:#fce4ec,stroke:#d81b60,stroke-width:3px,color:#000000
+    
+    class nixpkgs,darwin_input,hm_input input
+    class flake core
+    class config,homebrew darwin
+    class home_default,packages,git_config,shells,assets home
+    class darwin_system output
+```
+
+### Key Components
+
+- **🍎 System Configuration**: macOS system defaults, Nix daemon settings, and user management
+- **🍺 Homebrew Integration**: GUI applications, CLI tools, and development environments not available in nixpkgs
+- **🏠 Home Manager**: User-specific configurations including packages, shell setup, Git configuration, and dotfiles
+- **📁 Modular Structure**: Each aspect of the configuration is separated into focused modules for maintainability
 
 ## Installation
 
