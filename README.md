@@ -30,7 +30,12 @@ and `home-manager`.
 
 #### 1.1. Install Nix
 
-Install Nix using
+The recommended installation method is to Nix using Determinate Systems'
+installer that is downloadable here <https://docs.determinate.systems/>.
+
+##### Alternative installation method
+
+You can also install Nix using
 [nix-installer](https://zero-to-nix.com/concepts/nix-installer). Read more about
 it in the
 [Get Nix running on your system](https://zero-to-nix.com/start/install) guide.
@@ -39,10 +44,12 @@ it in the
 curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
 ```
 
-##### Alternative installation method
-
-You can also install Nix using Determinate Systems' installer that is
-downloadable here <https://docs.determinate.systems/>.
+> [!warning]
+>
+> This way of installing Nix may not work if you have
+> [`nix.enable = false` in your `configuration.nix` file](https://github.com/zainfathoni/nix-home/blob/b3ac0b52c284e5e92aa235d9c43ff82ac1716c3e/configuration.nix#L54).
+> If you have that, you can either remove that line or use the recommended
+> installation method above.
 
 #### 1.2. Install Homebrew
 
