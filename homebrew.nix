@@ -61,6 +61,7 @@
     "arc"
     "bruno"
     "chatgpt"
+    "claude"
     "daisydisk"
     "discord"
     "docker"
