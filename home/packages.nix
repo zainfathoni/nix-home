@@ -34,6 +34,9 @@
 
     # Pyenv
     "$PYENV_ROOT/bin"
+
+    # Bun installation
+    "$HOME/.local/bin"
   ];
 
   # The set of packages to appear in the user environment
