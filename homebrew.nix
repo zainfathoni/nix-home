@@ -28,6 +28,7 @@
     "docker-credential-helper-ecr"
     "fabric-ai"
     "gh"
+    "gitui"
     "mkcert"
     "mysql"
     "pyenv"
