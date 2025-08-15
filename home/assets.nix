@@ -12,6 +12,11 @@ in
   # Symlink scripts directory altogether
   home.file."scripts".source = mkOutOfStoreSymlink "${nixConfigDirectory}/assets/scripts";
 
+  # Symlink Cloud 66 Toolbelt binary
+  # @see https://help.cloud66.com/docs/toolbelt/toolbelt
+  # Version cx_0.3.0_darwin_arm64
+  home.file."bin/cx".source = mkOutOfStoreSymlink "${nixConfigDirectory}/assets/bin/cx";
+
   # Symlink Warp workflows
   home.file.".warp".source = mkOutOfStoreSymlink "${nixConfigDirectory}/assets/.warp";
 
