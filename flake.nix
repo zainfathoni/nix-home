@@ -16,7 +16,7 @@
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, darwin, home-manager }: {
+  outputs = { self, nixpkgs, darwin, home-manager, ... } @inputs: {
 
     # We need a darwinConfigurations output to actually have a `nix-darwin` configuration.
     # https://github.com/LnL7/nix-darwin#flakes-experimental
