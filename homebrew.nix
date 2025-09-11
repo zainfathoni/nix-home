@@ -25,6 +25,7 @@
     "bat"
     "bun"
     "colima"
+    "codex"
     "deno"
     "docker-credential-helper-ecr"
     "fabric-ai"
