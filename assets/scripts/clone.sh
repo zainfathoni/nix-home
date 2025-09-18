@@ -52,3 +52,9 @@ if [[ ! -d "$GITHUB/reactjs-id/shortlinks" ]] ; then
   cd $GITHUB/reactjs-id/shortlinks
   pnpm install
 fi
+
+if [[ ! -d "$GITHUB/zainfathoni/bapakcerdas.com" ]] ; then
+  git clone git@github.com:zainfathoni/bapakcerdas.com.git $GITHUB/zainfathoni/bapakcerdas.com
+  cd $GITHUB/zainfathoni/bapakcerdas.com
+  pnpm install
+fi

@@ -22,6 +22,7 @@
     kcovid = "$HOME/Code/GitLab/kawalcovid19/website/kcov.id/cli.js";
     feid = "$HOME/Code/GitHub/frontend-id/s.feid.dev/cli.js";
     react = "$HOME/Code/GitHub/reactjs-id/shortlinks/cli.js";
+    cerdas = "$HOME/Code/GitHub/zainfathoni/bapakcerdas.com/cli.js";
 
     # Frequently used Brew commands
     bl = "brew list -1";
