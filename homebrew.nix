@@ -35,6 +35,7 @@
     "mysql"
     "pyenv"
     "rbenv"
+    "planetscale/tap/pscale"
     "shopify-cli"
     "sst/tap/opencode"
     "uv"
