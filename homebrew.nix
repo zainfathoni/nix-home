@@ -14,6 +14,7 @@
   homebrew.taps = [
     "homebrew/services"
     "oven-sh/bun"
+    "planetscale/tap"
     "shopify/shopify"
     "sst/tap"
   ];
