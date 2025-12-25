@@ -20,6 +20,9 @@
     # FIXME: Remove this once the issue is fixed
     "/etc/profiles/per-user/zain/bin"
 
+    # Amp CLI
+    "$HOME/.amp/bin"
+
     # Volta
     "$VOLTA_HOME/bin"
 
