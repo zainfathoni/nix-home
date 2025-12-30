@@ -39,6 +39,7 @@
     "planetscale/tap/pscale"
     "shopify-cli"
     "sst/tap/opencode"
+    "steveyegge/beads/bd"
     "uv"
     "volta"
     "yadm"
