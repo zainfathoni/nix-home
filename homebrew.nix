@@ -12,6 +12,7 @@
   homebrew.global.brewfile = true;
 
   homebrew.taps = [
+    "assimelha/tap"
     "homebrew/services"
     "oven-sh/bun"
     "planetscale/tap"
@@ -24,6 +25,7 @@
   homebrew.brews = [
     "awscli"
     "bat"
+    "bdui"
     "bun"
     "colima"
     "codex"
