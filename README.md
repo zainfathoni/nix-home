@@ -16,8 +16,9 @@ and `home-manager`.
     - [4. Switch to the built Nix stores](#4-switch-to-the-built-nix-stores)
     - [5. Import GPG Keys](#5-import-gpg-keys)
     - [6. Decrypt secrets](#6-decrypt-secrets)
-    - [7. Set `nix-home` remote URL to use SSH](#7-set-nix-home-remote-url-to-use-ssh)
-    - [8. Clone URL shortener repositories](#8-clone-url-shortener-repositories)
+    - [7. Resync encrypted secrets](#7-resync-encrypted-secrets)
+    - [8. Set `nix-home` remote URL to use SSH](#8-set-nix-home-remote-url-to-use-ssh)
+    - [9. Clone URL shortener repositories](#9-clone-url-shortener-repositories)
   - [Updates](#updates)
     - [1. Find the latest stable version of Nix](#1-find-the-latest-stable-version-of-nix)
     - [2. Update flake.lock file](#2-update-flakelock-file)
@@ -213,7 +214,22 @@ yadm decrypt
 # enter the passphrase (if prompted)
 ```
 
-### 7. Set `nix-home` remote URL to use SSH
+### 7. Resync encrypted secrets
+
+To resync your encrypted files with yadm after making changes:
+
+```shell
+yadm encrypt
+yadm commit -am "update encrypted secrets"
+yadm push
+```
+
+The steps are:
+1. **Encrypt** to create/update the encrypted archive
+2. **Commit** with `-am` to stage and commit all modified files
+3. **Push** to sync with your remote yadm repository
+
+### 8. Set `nix-home` remote URL to use SSH
 
 Now that we have the SSH keys set up, we can change the remote URL to use SSH.
 
@@ -222,7 +238,7 @@ cd ~/Code/GitHub/zainfathoni/nix-home
 git remote set-url origin git@github.com:zainfathoni/nix-home.git
 ```
 
-### 8. Clone URL shortener repositories
+### 9. Clone URL shortener repositories
 
 ```shell
 volta install node
