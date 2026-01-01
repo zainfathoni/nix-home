@@ -32,6 +32,7 @@
     "deno"
     "docker-credential-helper-ecr"
     "fabric-ai"
+    "lazygit"
     "gh"
     "gitui"
     "mkcert"
