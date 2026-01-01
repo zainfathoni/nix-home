@@ -34,7 +34,6 @@
     "fabric-ai"
     "lazygit"
     "gh"
-    "gitui"
     "mkcert"
     "mysql"
     "pyenv"

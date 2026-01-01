@@ -23,7 +23,4 @@ in
   # Symlink Zed configuration files
   home.file.".config/zed/settings.json".source = mkOutOfStoreSymlink "${nixConfigDirectory}/assets/.config/zed/settings.json";
   home.file.".config/zed/keymap.json".source = mkOutOfStoreSymlink "${nixConfigDirectory}/assets/.config/zed/keymap.json";
-
-  # Symlink gitui configuration files
-  home.file.".config/gitui".source = mkOutOfStoreSymlink "${nixConfigDirectory}/assets/.config/gitui";
 }
