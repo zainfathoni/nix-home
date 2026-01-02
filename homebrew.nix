@@ -86,6 +86,7 @@
     "rectangle"
     "slack"
     "spotify"
+    "steipete/tap/codexbar"
     "visual-studio-code"
     "warp"
     "zed"
