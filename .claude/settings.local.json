@@ -1,6 +1,9 @@
 {
   "permissions": {
     "allow": [
+      "WebFetch(domain:nix-community.github.io)",
+      "WebSearch",
+      "Bash(cat:*)"
     ],
     "deny": []
   }
