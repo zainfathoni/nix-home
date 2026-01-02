@@ -87,6 +87,7 @@
     "slack"
     "spotify"
     "steipete/tap/codexbar"
+    "tmux"
     "visual-studio-code"
     "warp"
     "zed"
