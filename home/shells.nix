@@ -188,6 +188,14 @@
         };
       };
     };
+
+    # direnv - unclutter your .profile
+    # https://nix-community.github.io/home-manager/options.xhtml#opt-programs.direnv.enable
+    direnv = {
+      enable = true;
+      enableZshIntegration = true;
+      nix-direnv.enable = true;
+    };
   };
 }
 
