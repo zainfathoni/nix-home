@@ -25,7 +25,6 @@
   homebrew.brews = [
     "awscli"
     "bat"
-    "bdui"
     "bun"
     "colima"
     "codex"
