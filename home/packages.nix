@@ -7,6 +7,8 @@
     VOLTA_HOME = "$HOME/.volta";
     PNPM_HOME = "$HOME/.pnpm-global/bin";
     PYENV_ROOT = "$HOME/.pyenv";
+    GOPATH = "$HOME/go";
+    GOBIN = "$HOME/go/bin";
   };
 
   # Extra directories to add to $PATH
@@ -43,6 +45,9 @@
 
     # Symlinked files in bin directory
     "$HOME/bin"
+
+    # Go binaries
+    "$HOME/go/bin"
   ];
 
   # The set of packages to appear in the user environment
@@ -65,6 +70,7 @@
     ##################################
     # Languages
     ##################################
+    go
     rustc
     cargo
 
