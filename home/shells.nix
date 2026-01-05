@@ -98,7 +98,6 @@
         cmd_duration = {
           format = " [$duration]($style) ";
           style = "bold #EC7279";
-          show_notifications = true;
         };
         directory = {
           truncate_to_repo = false;
