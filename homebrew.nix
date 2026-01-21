@@ -72,7 +72,7 @@
     "claude"
     "daisydisk"
     "discord"
-    "docker"
+    "docker-desktop"
     "gitkraken"
     "google-chrome@canary"
     "gpg-suite-no-mail"
