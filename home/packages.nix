@@ -9,6 +9,8 @@
     PYENV_ROOT = "$HOME/.pyenv";
     GOPATH = "$HOME/go";
     GOBIN = "$HOME/go/bin";
+    # https://github.com/steveyegge/beads/blob/main/docs/GIT_INTEGRATION.md#solutions-for-worktree-users
+    BEADS_NO_DAEMON = "1";
   };
 
   # Extra directories to add to $PATH
