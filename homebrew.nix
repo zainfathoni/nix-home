@@ -76,7 +76,7 @@
     "gitkraken"
     "google-chrome@canary"
     "gpg-suite-no-mail"
-    "ledger-live"
+    "ledger-wallet"
     "logi-options+"
     "karabiner-elements"
     "nordvpn"
