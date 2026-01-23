@@ -11,6 +11,8 @@
     GOBIN = "$HOME/go/bin";
     # https://github.com/steveyegge/beads/blob/main/docs/GIT_INTEGRATION.md#solutions-for-worktree-users
     BEADS_NO_DAEMON = "1";
+    # Default editor
+    EDITOR = "vim";
   };
 
   # Extra directories to add to $PATH
