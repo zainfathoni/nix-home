@@ -44,6 +44,7 @@
     "uv"
     "volta"
     "yadm"
+    "obsidian-cli"
   ];
 
   # Prefer installing application from the Mac App Store
