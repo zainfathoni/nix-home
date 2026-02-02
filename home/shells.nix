@@ -76,6 +76,11 @@
       eval "$(pyenv init - zsh)"
       eval "$(rbenv init - zsh)"
       PROMPT="$PROMPT$'\n'"
+
+      # Source encrypted secrets managed by yadm
+      if [ -f "$HOME/.secrets.env" ]; then
+        source "$HOME/.secrets.env"
+      fi
     '';
 
     # Style Z Shell using Starship, a cross-shell prompt
