@@ -13,6 +13,8 @@
     BEADS_NO_DAEMON = "1";
     # Default editor
     EDITOR = "vim";
+    # Fizzy account ID
+    FIZZY_ACCOUNT = "6104728";
   };
 
   # Extra directories to add to $PATH
