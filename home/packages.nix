@@ -46,9 +46,6 @@
     # Pyenv
     "$PYENV_ROOT/bin"
 
-    # Bun installation
-    "$HOME/.local/bin"
-
     # Symlinked files in bin directory
     "$HOME/bin"
 

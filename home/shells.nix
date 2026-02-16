@@ -3,7 +3,7 @@
 {
   # Add Homebrew to PATH
   # https://nix-community.github.io/home-manager/options.xhtml#opt-home.sessionPath
-  home.sessionPath = [ "/opt/homebrew/bin" "/opt/homebrew/sbin" ];
+  home.sessionPath = [ "$HOME/.local/bin" "/opt/homebrew/bin" "/opt/homebrew/sbin" ];
 
   # https://nix-community.github.io/home-manager/options.xhtml#opt-programs.zsh.shellAliases
   # Shell aliases that is compatible across all shells
