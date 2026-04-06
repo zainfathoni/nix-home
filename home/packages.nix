@@ -15,6 +15,8 @@
     EDITOR = "vim";
     # Fizzy account ID
     FIZZY_ACCOUNT = "6104728";
+    # Disable flickering in Claude Code CLI
+    CLAUDE_CODE_NO_FLICKER = "1";
   };
 
   # Extra directories to add to $PATH
