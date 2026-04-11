@@ -26,7 +26,6 @@
     "awscli"
     "bat"
     "bun"
-    "codex"
     "colima"
     "deno"
     "docker-credential-helper-ecr"
