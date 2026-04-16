@@ -1,0 +1,39 @@
+name = "Cafein Ralph"
+color = "cyan"
+
+[[panes]]
+id = "p1"
+split = "horizontal"
+children = [
+    "p2",
+    "p3",
+]
+
+[[panes]]
+id = "p2"
+type = "terminal"
+directory = "/Users/zain/Code/GitHub/eltrovert/cafein.id"
+commands = ["./ralph.sh"]
+
+[[panes]]
+id = "p3"
+split = "vertical"
+children = [
+    "p4",
+    "p5",
+]
+
+[[panes]]
+id = "p4"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/eltrovert/cafein.id"
+commands = ["bv"]
+
+[[panes]]
+id = "p5"
+type = "terminal"
+directory = "/Users/zain/Code/GitHub/eltrovert/cafein.id"
+
+[params]
+commands = ["lazygit"]

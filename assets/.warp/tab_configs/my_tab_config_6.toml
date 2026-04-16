@@ -1,0 +1,13 @@
+name = "Claude Notes"
+color = "yellow"
+
+[[panes]]
+id = "p1"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/zainfathoni/claude-notes"
+commands = [
+    "pi",
+]
+
+[params]

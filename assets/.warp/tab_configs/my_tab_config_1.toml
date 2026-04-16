@@ -1,0 +1,10 @@
+name = "BTA E2E"
+color = "green"
+
+[[panes]]
+id = "p1"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/book-that-app/bta-e2e"
+
+[params]

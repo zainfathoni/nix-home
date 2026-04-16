@@ -1,0 +1,10 @@
+name = "BTA Test"
+color = "magenta"
+
+[[panes]]
+id = "p1"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/book-that-app/bta-test"
+
+[params]

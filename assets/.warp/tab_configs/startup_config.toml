@@ -1,0 +1,8 @@
+name = "New tab: zain"
+
+[[panes]]
+id = "main"
+type = "terminal"
+directory = "/Users/zain"
+
+[params]
