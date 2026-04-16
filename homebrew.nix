@@ -84,6 +84,7 @@
     "notion"
     "notion-calendar"
     "obsidian"
+    "opencode-desktop"
     "rectangle"
     "slack"
     "spotify"
