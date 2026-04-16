@@ -34,6 +34,6 @@ commands = ["bv"]
 id = "p5"
 type = "terminal"
 directory = "/Users/zain/Code/GitHub/eltrovert/cafein.id"
+commands = ["lazygit"]
 
 [params]
-commands = ["lazygit"]
