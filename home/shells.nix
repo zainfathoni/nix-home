@@ -61,6 +61,11 @@
     # https://nix-community.github.io/home-manager/options.xhtml#opt-programs.zsh.enable
     zsh.enable = true;
 
+    # Skip completions from insecure directories (e.g. /nix/store) instead of
+    # prompting on each shell launch.
+    # https://nix-community.github.io/home-manager/options.xhtml#opt-programs.zsh.completionInit
+    zsh.completionInit = "autoload -U compinit && compinit -i";
+
     # Z Shell plugins
     # https://nix-community.github.io/home-manager/options.xhtml#opt-programs.zsh.plugins
     zsh.plugins = [
