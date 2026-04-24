@@ -1,0 +1,25 @@
+name = "OpenCode Web"
+color = "green"
+
+[[panes]]
+id = "p1"
+split = "horizontal"
+children = [
+    "p2",
+    "p3",
+]
+
+[[panes]]
+id = "p2"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/book-that-app/bookthatapp"
+commands = ["opencode web --mdns"]
+
+[[panes]]
+id = "p3"
+type = "terminal"
+directory = "/Users/zain/Code/GitHub/book-that-app/bookthatapp"
+commands = ["caffeinate -s"]
+
+[params]

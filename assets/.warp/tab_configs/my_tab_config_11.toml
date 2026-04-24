@@ -1,0 +1,10 @@
+name = "Ebook"
+color = "yellow"
+
+[[panes]]
+id = "p1"
+type = "agent"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/vibefromcafe/ebook"
+
+[params]

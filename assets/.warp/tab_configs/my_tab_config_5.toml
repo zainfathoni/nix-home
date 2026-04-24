@@ -5,6 +5,6 @@ color = "cyan"
 id = "p1"
 type = "terminal"
 is_focused = true
-directory = "/Users/zain/Code/GitHub/eltrovert/cafein.id"
+directory = "/Users/zain/Code/GitHub/vibefromcafe/cafein.id"
 
 [params]
