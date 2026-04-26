@@ -1,0 +1,13 @@
+name = "Claude Notes - Commit and Push"
+color = "yellow"
+
+[[panes]]
+id = "p1"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/zainfathoni/claude-notes"
+commands = [
+    "pi --model openai-codex/gpt-5.3-codex-spark -p \"commit and push\"",
+]
+
+[params]
