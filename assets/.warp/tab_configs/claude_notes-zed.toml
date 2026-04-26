@@ -1,4 +1,4 @@
-name = "Claude Notes"
+name = "Claude Notes - Zed"
 color = "yellow"
 
 [[panes]]
@@ -6,8 +6,6 @@ id = "p1"
 type = "terminal"
 is_focused = true
 directory = "/Users/zain/Code/GitHub/zainfathoni/claude-notes"
-commands = [
-    "pi",
-]
+commands = ["zed ."]
 
 [params]
