@@ -1,0 +1,10 @@
+name = "Homeschooling"
+color = "red"
+
+[[panes]]
+id = "p1"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/zainfathoni/homeschooling"
+
+[params]
