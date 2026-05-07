@@ -1,4 +1,4 @@
-name = "BTA - OpenCode Web"
+name = "OpenCode Web"
 color = "green"
 
 [[panes]]
@@ -13,13 +13,13 @@ children = [
 id = "p2"
 type = "terminal"
 is_focused = true
-directory = "/Users/zain/Code/GitHub/book-that-app/bookthatapp"
+directory = "/Users/zain/Code/GitHub/zainfathoni/agent-workflows"
 commands = ["opencode web --mdns"]
 
 [[panes]]
 id = "p3"
 type = "terminal"
-directory = "/Users/zain/Code/GitHub/book-that-app/bookthatapp"
+directory = "/Users/zain/Code/GitHub/zainfathoni/agent-workflows"
 commands = ["caffeinate -s"]
 
 [params]
