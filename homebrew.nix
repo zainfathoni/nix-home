@@ -75,6 +75,7 @@
     "daisydisk"
     "discord"
     "docker-desktop"
+    "ghostty"
     "gitkraken"
     "google-chrome@canary"
     "gpg-suite-no-mail"
