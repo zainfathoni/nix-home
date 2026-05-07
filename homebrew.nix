@@ -23,6 +23,7 @@
   # List of Homebrew formulae to install.
   # https://daiderd.com/nix-darwin/manual/index.html#opt-homebrew.brews
   homebrew.brews = [
+    "agent-browser"
     "awscli"
     "bat"
     "bun"
