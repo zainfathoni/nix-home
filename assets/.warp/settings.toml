@@ -85,7 +85,7 @@ spacing = "normal"
 [appearance.window]
 override_opacity = 70
 open_windows_at_custom_size = false
-zoom_level = 100
+zoom_level = 150
 override_blur = 5
 
 [appearance.full_screen_apps]

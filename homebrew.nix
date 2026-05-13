@@ -34,6 +34,7 @@
     "lazygit"
     "gh"
     "mkcert"
+    "mosh"
     "mysql"
     "pyenv"
     "rbenv"
