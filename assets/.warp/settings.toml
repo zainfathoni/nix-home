@@ -25,6 +25,7 @@ top = { height = 100, width = 60 }
 
 [terminal]
 use_audible_bell = true
+osc52_clipboard_access = "write_only"
 
 [terminal.input]
 alias_expansion_enabled = false
