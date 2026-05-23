@@ -13,6 +13,7 @@
 
   homebrew.taps = [
     "assimelha/tap"
+    "firewalker06/tycho"
     "homebrew/services"
     "oven-sh/bun"
     "planetscale/tap"
@@ -43,6 +44,7 @@
     "sst/tap/opencode"
     "steveyegge/beads/bd"
     "tmux"
+    "tycho"
     "uv"
     "volta"
     "yadm"
