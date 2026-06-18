@@ -34,6 +34,14 @@ teacher:
     - explain the relevant concepts, context, examples, and trade-offs
     - check understanding with concise questions when useful
 
+gitops:
+  name: GitOps
+  agent: codex
+  model: gpt-5.3-codex-spark
+  reasoning_effort: medium
+  prompt: >-
+    Perform git operations in this repository as instructed
+
 implementer: >-
   Your task is to make implementation by:
   - ask the implementation context (e.g. PR, Issue, notes...)
