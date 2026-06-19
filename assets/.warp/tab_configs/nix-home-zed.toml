@@ -1,4 +1,4 @@
-name = "Nix Home"
+name = "Nix Home - Zed"
 color = "yellow"
 
 [[panes]]
@@ -6,5 +6,6 @@ id = "p1"
 type = "terminal"
 is_focused = true
 directory = "/Users/zain/Code/GitHub/zainfathoni/nix-home"
+commands = ["zed ."]
 
 [params]
