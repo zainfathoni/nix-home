@@ -6,6 +6,6 @@ id = "p1"
 type = "terminal"
 is_focused = true
 directory = "/Users/zain/Library/Mobile Documents/iCloud~md~obsidian/Documents/obsidian-notes"
-commands = ["amp"]
+commands = ["amp -m rush"]
 
 [params]
