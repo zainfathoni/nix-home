@@ -1,0 +1,32 @@
+name: Destructive Command Guard
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dcg
+        run: |
+          set -euo pipefail
+          version="v0.5.7"
+          archive="dcg-x86_64-unknown-linux-musl.tar.xz"
+          checksum="3cb7297ac90a01b82e6165b5ee0a74b8b673250e4a0ab9182d5dbe396a467cde"
+          url="https://github.com/Dicklesworthstone/destructive_command_guard/releases/download/${version}/${archive}"
+          install_dir="${RUNNER_TEMP}/dcg"
+
+          mkdir -p "${install_dir}"
+          cd "${install_dir}"
+          curl --fail --location --silent --show-error "${url}" --output "${archive}"
+          printf '%s  %s\n' "${checksum}" "${archive}" | sha256sum --check
+          tar -xJf "${archive}"
+          chmod +x dcg
+
+      - name: Run dcg scan
+        run: |
+          "${RUNNER_TEMP}/dcg/dcg" scan --paths . --fail-on error --format markdown
