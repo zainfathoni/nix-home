@@ -1,0 +1,10 @@
+name = "Tycho"
+color = "cyan"
+
+[[panes]]
+id = "p1"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/.tycho"
+
+[params]
