@@ -1,5 +1,20 @@
 { pkgs, ... }:
 
+let
+  amux = (pkgs.buildGoModule.override { go = pkgs.go_1_24; }) {
+    pname = "amux";
+    version = "0.1.0";
+
+    src = pkgs.fetchFromGitHub {
+      owner = "zainfathoni";
+      repo = "amux";
+      rev = "v0.1.0";
+      hash = "sha256-mf6pXQXf8/gBLBPfuUTnkHmOljib+z9w6C+22xQFctE=";
+    };
+
+    vendorHash = null;
+  };
+in
 {
   # Environment variables to always set at login.
   # https://nix-community.github.io/home-manager/options.html#opt-home.sessionVariables
@@ -38,7 +53,7 @@
 
     # pnpm
     "$HOME/.pnpm-global/bin"
-    
+
     # bun
     "$HOME/.bun/bin"
 
@@ -87,5 +102,6 @@
     ##################################
     eza # A modern replacement for the `ls` command
     jq # JSON in shell
+    amux # Amp tmux workspace manager
   ];
 }
