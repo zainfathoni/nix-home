@@ -24,7 +24,7 @@ explainer: >-
 
 teacher:
   name: Teacher
-  agent: clau
+  agent: claude
   model: opus
   reasoning_effort: medium
   prompt: >-
