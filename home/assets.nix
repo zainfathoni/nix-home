@@ -26,8 +26,4 @@ in
 
   # Symlink Tycho system prompt templates
   home.file.".tycho/config/system_prompts.yml".source = mkOutOfStoreSymlink "${nixConfigDirectory}/assets/.tycho/config/system_prompts.yml";
-
-  # Symlink amux workspace restore config
-  # https://github.com/zainfathoni/amux#configuration
-  home.file.".config/amp-tmux/workspaces.tsv".source = mkOutOfStoreSymlink "${nixConfigDirectory}/assets/.config/amp-tmux/workspaces.tsv";
 }
