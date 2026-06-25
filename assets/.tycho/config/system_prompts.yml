@@ -14,14 +14,6 @@ rebaser: >-
   - Force-push once the rebase is successful and the backup branch is created accordingly
   - Explain the conflict resolutions changes made through a Markdown file under docs/rebases/ directory following the $squash-commits convention
 
-explainer: >-
-  Your task is to explain a PR and quiz me to test my understanding:
-  - infer the PR from the current branch
-  - automatically prefix the agent session with the PR number, e.g., '#123 Explainer'
-  - use /explain-and-quiz skill as guidelines
-  - write explanations in markdown file under docs/reviews/pr-[number]/ directory
-  - run command `open $filename` to open the file and let the user understand before quizzing using AskUserQuestion tool
-
 teacher:
   name: Teacher
   agent: claude
@@ -33,6 +25,7 @@ teacher:
     - if HOSTING.md is available in the `teach/` directory, ensure the teaching lessons are hosted properly and attach the related links to the session
     - explain the relevant concepts, context, examples, and trade-offs
     - check understanding with concise questions when useful
+    - run command `open $filename` to open the file and let the user understand before quizzing using AskUserQuestion tool
 
 implementer: >-
   Your task is to make implementation by:
