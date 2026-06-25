@@ -6,13 +6,28 @@
 
 custom: ""
 
-rebaser: >-
+amux:
+  name: Amux
+  agent: codex
+  model: gpt-5.3-codex-spark
+  reasoning_effort: medium
+  prompt: >-
+    Your task is to spawn or revive a tmux window at this directory according to $amux skill
+    - Checkout to the branch of this PR
+    - If the tmux window exists, use $amux skill to revive it
+    - If no tmux window exists, use $amux skill to spawn a new tmux window at this directory
+
+rebaser:
+  name: Rebaser
+  agent: codex
+  model: gpt-5.5
+  prompt: >-
   Your task is to rebase the current branch (unless explicitly specified):
-  - Retain the existing PR intention, derive the base branch from the PR
-  - Follow the conventions in $squash-commits without squashing the commits
-  - Resolve any conflicts that arise during the rebase
-  - Force-push once the rebase is successful and the backup branch is created accordingly
-  - Explain the conflict resolutions changes made through a Markdown file under docs/rebases/ directory following the $squash-commits convention
+    - Retain the existing PR intention, derive the base branch from the PR
+    - Follow the conventions in $squash-commits without squashing the commits
+    - Resolve any conflicts that arise during the rebase
+    - Force-push once the rebase is successful and the backup branch is created accordingly
+    - Explain the conflict resolutions changes made through a Markdown file under docs/rebases/ directory following the $squash-commits convention
 
 teacher:
   name: Teacher
@@ -27,29 +42,56 @@ teacher:
     - check understanding with concise questions when useful
     - run command `open $filename` to open the file and let the user understand before quizzing using AskUserQuestion tool
 
-implementer: >-
-  Your task is to make implementation by:
-  - ask the implementation context (e.g. PR, Issue, notes...)
-  - create a summary of the context by asking What, Why, and How
-  - ask the user for input
-  - make implementation plan by writing down in markdown under tmp/plan/yyyy-mm-dd_<implementation-name>.md
-  - run command `open $filename` to open the file and let the user review
+implementer:
+  name: Implementer
+  agent: codex
+  model: gpt-5.5
+  reasoning_effort: medium
+  prompt: >-
+    Your task is to make implementation by:
+    - ask the implementation context (e.g. PR, Issue, notes...)
+    - create a summary of the context by asking What, Why, and How
+    - ask the user for input
+    - make implementation plan by writing down in markdown under tmp/plan/yyyy-mm-dd_<implementation-name>.md
+    - run command `open $filename` to open the file and let the user review
 
-reviewer: >-
-  Your task is to review PR(s):
-  - ask which PR to review
-  - use /review skill as guidelines
-  - write review in markdown file under /tmp directory
-  - run command `open $filename` to open the file and let the user review
+self-reviewer:
+  name: Self Reviewer
+  agent: codex
+  model: gpt-4
+  reasoning_effort: medium
+  prompt: >-
+    Your task is to review PR(s)
+    - ask which PR to review
+    - use /self-review skill as guidelines
+    - write review in markdown file under /tmp directory
+    - run command `open $filename` to open the file and let the user review
 
-maintenance: >-
-  Your task is to perform maintenance by:
-  - List down at most 3 todo notes (e.g. bin/rails notes)
-  - List down at most 3 open github issues
-  - List down at most 3 open github pull requests
-  - Assess priority by evaluating the urgency, severity, and complexity
-  - Write it in markdown files under tmp/maintenance/yyyy-mm-dd_maintenance.md
-  - When user has chosen, update the file by making a Prompt for each task with the following format:
-    - Summarizing the context
-    - Determine the goal
-    - List down useful coding agent skills to work with
+reviewer:
+  name: Team Reviewer
+  agent: codex
+  model: gpt-4
+  reasoning_effort: medium
+  prompt: >-
+    Your task is to review PR(s)
+    - ask which PR to review
+    - use /team-review skill as guidelines
+    - write review in markdown file under /tmp directory
+    - run command `open $filename` to open the file and let the user review
+
+maintenance:
+  name: Maintenance
+  agent: codex
+  model: gpt-5.5
+  reasoning_effort: medium
+  prompt: >-
+    Your task is to perform maintenance by:
+    - List down at most 3 todo notes (e.g. bin/rails notes)
+    - List down at most 3 open github issues
+    - List down at most 3 open github pull requests
+    - Assess priority by evaluating the urgency, severity, and complexity
+    - Write it in markdown files under tmp/maintenance/yyyy-mm-dd_maintenance.md
+    - When user has chosen, update the file by making a Prompt for each task with the following format:
+      - Summarizing the context
+      - Determine the goal
+      - List down useful coding agent skills to work with
