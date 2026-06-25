@@ -11,11 +11,6 @@
   "diff_view_style": "split",
   "agent_servers": {
     "pi-acp": {
-      "favorite_models": [
-        "openai-codex/gpt-5.3-codex-spark",
-        "openai-codex/gpt-5.4-mini",
-        "openai-codex/gpt-5.5",
-      ],
       "type": "registry",
     },
     "claude-acp": {
@@ -23,7 +18,7 @@
     },
     "amp-acp": {
       "default_config_options": {
-        "amp-mode": "rush"
+        "amp-mode": "rush",
       },
       "type": "registry",
     },
