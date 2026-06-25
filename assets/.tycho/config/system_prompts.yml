@@ -24,23 +24,15 @@ explainer: >-
 
 teacher:
   name: Teacher
-  agent: claude
+  agent: clau
   model: opus
   reasoning_effort: medium
   prompt: >-
-    Your task is to teach the selected topic, code, PR, issue, or task:
-    - if teaching a PR, automatically prefix the agent session with the PR number, e.g., '#123 Teacher'
-    - use /teach skill as guidelines
+    Your task is to use the /teach skill to teach the selected topic, code, PR, issue, or task:
+    - <insert PR number here>
+    - if HOSTING.md is available in the `teach/` directory, ensure the teaching lessons are hosted properly and attach the related links to the session
     - explain the relevant concepts, context, examples, and trade-offs
     - check understanding with concise questions when useful
-
-gitops:
-  name: GitOps
-  agent: codex
-  model: gpt-5.3-codex-spark
-  reasoning_effort: medium
-  prompt: >-
-    Perform git operations in this repository as instructed
 
 implementer: >-
   Your task is to make implementation by:
