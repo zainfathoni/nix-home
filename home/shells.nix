@@ -1,9 +1,11 @@
-{ pkgs, ... }:
+{ lib, pkgs, ... }:
 
 {
-  # Add Homebrew to PATH
+  # Add user-local self-managed tools and Homebrew to PATH. Keep
+  # $HOME/.local/bin first so tools like amux can update themselves without
+  # being shadowed by package-manager-provided binaries.
   # https://nix-community.github.io/home-manager/options.xhtml#opt-home.sessionPath
-  home.sessionPath = [ "$HOME/.local/bin" "/opt/homebrew/bin" "/opt/homebrew/sbin" ];
+  home.sessionPath = lib.mkBefore [ "$HOME/.local/bin" "/opt/homebrew/bin" "/opt/homebrew/sbin" ];
 
   # https://nix-community.github.io/home-manager/options.xhtml#opt-programs.zsh.shellAliases
   # Shell aliases that is compatible across all shells
@@ -60,6 +62,13 @@
     # Z Shell (Default shell)
     # https://nix-community.github.io/home-manager/options.xhtml#opt-programs.zsh.enable
     zsh.enable = true;
+
+    # Keep user-local self-managed tools ahead of package-managed binaries in
+    # interactive shells so commands like `amux self-update` update the active
+    # binary instead of being shadowed by an older package-managed install.
+    zsh.initExtraFirst = ''
+      path=("$HOME/.local/bin" ''${path:#$HOME/.local/bin})
+    '';
 
     # Skip completions from insecure directories (e.g. /nix/store) instead of
     # prompting on each shell launch.
@@ -211,6 +220,3 @@
     };
   };
 }
-
-
-

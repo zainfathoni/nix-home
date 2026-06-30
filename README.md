@@ -14,11 +14,12 @@ and `home-manager`.
     - [3. Build Nix stores](#3-build-nix-stores)
       - [3.1. Backup the existing `nix.conf` file](#31-backup-the-existing-nixconf-file)
     - [4. Switch to the built Nix stores](#4-switch-to-the-built-nix-stores)
-    - [5. Import GPG Keys](#5-import-gpg-keys)
-    - [6. Decrypt secrets](#6-decrypt-secrets)
-    - [7. Resync encrypted secrets](#7-resync-encrypted-secrets)
-    - [8. Set `nix-home` remote URL to use SSH](#8-set-nix-home-remote-url-to-use-ssh)
-    - [9. Clone URL shortener repositories](#9-clone-url-shortener-repositories)
+    - [5. Install self-managed `amux`](#5-install-self-managed-amux)
+    - [6. Import GPG Keys](#6-import-gpg-keys)
+    - [7. Decrypt secrets](#7-decrypt-secrets)
+    - [8. Resync encrypted secrets](#8-resync-encrypted-secrets)
+    - [9. Set `nix-home` remote URL to use SSH](#9-set-nix-home-remote-url-to-use-ssh)
+    - [10. Clone URL shortener repositories](#10-clone-url-shortener-repositories)
   - [Updates](#updates)
     - [1. Find the latest stable version of Nix](#1-find-the-latest-stable-version-of-nix)
     - [2. Update flake.lock file](#2-update-flakelock-file)
@@ -193,7 +194,52 @@ the password:
 And by the end of the Homebrew installation, the `nix-darwin` will ask for the
 password to apply all the changes.
 
-### 5. Import GPG Keys
+### 5. Install self-managed `amux`
+
+`amux` is intentionally not installed through Nix. It should live in
+`$HOME/.local/bin` so the active binary can be updated independently of this
+flake by [`amux self-update`](https://github.com/zainfathoni/amux/issues/21).
+
+Home Manager keeps `$HOME/.local/bin` first in interactive Zsh sessions, so a
+user-local `amux` should win over any older package-managed binary. After
+switching this flake, run `hash -r` or open a new shell before checking
+`which amux`.
+
+To migrate from the previous Nix-managed `amux`, rebuild and switch this flake,
+then install the latest GitHub release into `$HOME/.local/bin` without pinning a
+release in this repository:
+
+```shell
+mkdir -p "$HOME/.local/bin"
+
+os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+arch="$(uname -m)"
+case "$arch" in
+  arm64 | aarch64) arch="arm64" ;;
+  x86_64) arch="amd64" ;;
+esac
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+gh release download \
+  --repo zainfathoni/amux \
+  --pattern "amux-${os}-${arch}.tar.gz" \
+  --dir "$tmpdir"
+
+archive="$tmpdir/amux-${os}-${arch}.tar.gz"
+tar -xzf "$archive" -C "$tmpdir"
+install -m 0755 "$tmpdir/amux-${os}-${arch}/amux" "$HOME/.local/bin/amux"
+
+hash -r
+which amux
+amux --version
+```
+
+Use `amux self-update` for future `amux` updates instead of editing this Nix
+configuration.
+
+### 6. Import GPG Keys
 
 Import GPG Keys from my password manager.
 
@@ -201,7 +247,7 @@ Import GPG Keys from my password manager.
 2. Copy the private key block to the clipboard.
 3. The GPG Keychain will detect the private keys automatically.
 
-### 6. Decrypt secrets
+### 7. Decrypt secrets
 
 Once `yadm` is installed using the command above, we can use `yadm` to decrypt
 the secrets.
@@ -214,7 +260,7 @@ yadm decrypt
 # enter the passphrase (if prompted)
 ```
 
-### 7. Resync encrypted secrets
+### 8. Resync encrypted secrets
 
 To resync your encrypted files with yadm after making changes:
 
@@ -229,7 +275,7 @@ The steps are:
 2. **Commit** with `-am` to stage and commit all modified files
 3. **Push** to sync with your remote yadm repository
 
-### 8. Set `nix-home` remote URL to use SSH
+### 9. Set `nix-home` remote URL to use SSH
 
 Now that we have the SSH keys set up, we can change the remote URL to use SSH.
 
@@ -238,7 +284,7 @@ cd ~/Code/GitHub/zainfathoni/nix-home
 git remote set-url origin git@github.com:zainfathoni/nix-home.git
 ```
 
-### 9. Clone URL shortener repositories
+### 10. Clone URL shortener repositories
 
 ```shell
 volta install node
