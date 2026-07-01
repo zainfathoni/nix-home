@@ -17,6 +17,8 @@
     FIZZY_ACCOUNT = "6104728";
     # Disable flickering in Claude Code CLI
     CLAUDE_CODE_NO_FLICKER = "1";
+    # Enable Amp remote control terminal integration
+    AMP_REMOTE_CONTROL_TERMINAL = "1";
   };
 
   # Extra directories to add to $PATH
