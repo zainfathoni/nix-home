@@ -1,0 +1,31 @@
+name = "Tycho - Tailscale & tmux"
+color = "cyan"
+
+[[panes]]
+id = "p1"
+split = "horizontal"
+children = [
+    "p2",
+    "p3",
+]
+
+[[panes]]
+id = "p2"
+type = "terminal"
+directory = "/Users/zain/.tycho"
+commands = [
+	"tailscale serve --bg 7373",
+	"tycho serve --port 7373"
+]
+
+[[panes]]
+id = "p3"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/.tycho"
+commands = [
+	"amux launch tycho Tycho",
+	"tmux attach -t Tycho"
+]
+
+[params]

@@ -1,4 +1,4 @@
-name = "Obsidian"
+name = "Obsidian - tmux"
 color = "magenta"
 
 [[panes]]
@@ -6,5 +6,9 @@ id = "p1"
 type = "terminal"
 is_focused = true
 directory = "/Users/zain/Library/Mobile Documents/iCloud~md~obsidian/Documents/obsidian-notes"
+commands = [
+    "amux launch obsidian Obsidian",
+	"tmux attach -t Obsidian"
+]
 
 [params]

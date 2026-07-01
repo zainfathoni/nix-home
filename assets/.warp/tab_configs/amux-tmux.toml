@@ -1,0 +1,14 @@
+name = "Amux - tmux"
+color = "green"
+
+[[panes]]
+id = "p1"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/zainfathoni/amux"
+commands = [
+	"amux launch amux Amux",
+	"tmux attach -t Amux"
+]
+
+[params]

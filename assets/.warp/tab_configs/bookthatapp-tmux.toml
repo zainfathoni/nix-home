@@ -1,0 +1,14 @@
+name = "BTA - tmux"
+color = "red"
+
+[[panes]]
+id = "p1"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/book-that-app/bookthatapp"
+commands = [
+	"amux launch bta BTA",
+	"tmux attach -t BTA"
+]
+
+[params]
