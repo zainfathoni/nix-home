@@ -1,0 +1,14 @@
+name = "AI Inference Lab - tmux"
+color = "yellow"
+
+[[panes]]
+id = "p1"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/zainfathoni/ai-inference-lab"
+commands = [
+"amux launch ai-inference-lab AI Inference Lab",
+"tmux attach -t AI Inference Lab"
+]
+
+[params]

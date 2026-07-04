@@ -1,0 +1,14 @@
+name = "VFC - tmux"
+color = "yellow"
+
+[[panes]]
+id = "p1"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/zainfathoni/vibefromcafe"
+commands = [
+"amux launch vfc VFC",
+"tmux attach -t VFC"
+]
+
+[params]

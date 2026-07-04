@@ -1,0 +1,14 @@
+name = "Kelas - tmux"
+color = "blue"
+
+[[panes]]
+id = "p1"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/zainfathoni/kelas.rumahberbagi.com"
+commands = [
+    "amux launch kelas Kelas",
+    "tmux attach -t Kelas"
+]
+
+[params]

@@ -1,0 +1,14 @@
+name = "Homeschooling - tmux"
+color = "red"
+
+[[panes]]
+id = "p1"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/zainfathoni/homeschooling"
+commands = [
+"amux launch homeschooling Homeschooling",
+"tmux attach -t Homeschooling"
+]
+
+[params]
