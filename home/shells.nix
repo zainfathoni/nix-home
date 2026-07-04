@@ -70,10 +70,12 @@
       path=("$HOME/.local/bin" ''${path:#$HOME/.local/bin})
     '';
 
-    # Skip completions from insecure directories (e.g. /nix/store) instead of
-    # prompting on each shell launch.
+    # Skip compinit's security audit for Nix-managed completions. On macOS, zsh
+    # can report /nix/store as insecure even though Nix store paths are immutable
+    # for regular users, and `compinit -i` still runs `compaudit` before
+    # filtering insecure paths.
     # https://nix-community.github.io/home-manager/options.xhtml#opt-programs.zsh.completionInit
-    zsh.completionInit = "autoload -U compinit && compinit -i";
+    zsh.completionInit = "autoload -U compinit && compinit -u";
 
     # Z Shell plugins
     # https://nix-community.github.io/home-manager/options.xhtml#opt-programs.zsh.plugins
