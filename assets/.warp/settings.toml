@@ -2,7 +2,7 @@
 
 [warpify.ssh]
 use_ssh_tmux_wrapper = false
-ssh_tmux_deprecation_notice_pending = true
+ssh_tmux_deprecation_notice_pending = false
 
 [global_hotkey]
 
