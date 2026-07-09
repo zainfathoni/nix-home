@@ -7,8 +7,8 @@ type = "terminal"
 is_focused = true
 directory = "/Users/zain/Code/GitHub/zainfathoni/homeschooling"
 commands = [
-"amux launch homeschooling Homeschooling",
-"tmux attach -t Homeschooling"
+"amux launch homeschooling",
+"tmux attach -t homeschooling"
 ]
 
 [params]

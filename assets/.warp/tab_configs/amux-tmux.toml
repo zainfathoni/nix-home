@@ -7,8 +7,8 @@ type = "terminal"
 is_focused = true
 directory = "/Users/zain/Code/GitHub/zainfathoni/amux"
 commands = [
-	"amux launch amux Amux",
-	"tmux attach -t Amux"
+	"amux launch amux",
+	"tmux attach -t amux"
 ]
 
 [params]

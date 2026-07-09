@@ -7,8 +7,8 @@ type = "terminal"
 is_focused = true
 directory = "/Users/zain/Library/Mobile Documents/iCloud~md~obsidian/Documents/obsidian-notes"
 commands = [
-    "amux launch obsidian Obsidian",
-	"tmux attach -t Obsidian"
+    "amux launch obsidian",
+	"tmux attach -t obsidian"
 ]
 
 [params]

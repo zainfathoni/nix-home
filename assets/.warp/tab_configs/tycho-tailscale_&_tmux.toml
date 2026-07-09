@@ -8,11 +8,11 @@ is_focused = true
 directory = "/Users/zain/.tycho"
 commands = [
 	"tailscale serve --bg 7373",
-	"tmux has-session -t Tycho 2>/dev/null || tmux new-session -d -s Tycho -c /Users/zain/.tycho -n hq",
-	"tmux move-window -s Tycho:0 -t Tycho:1 2>/dev/null || true",
-	"amux launch tycho Tycho",
-	"tmux list-windows -t Tycho -F '#W' | grep -qx Server || tmux new-window -d -a -t \"Tycho:$(tmux list-windows -t Tycho -F '#I' | sort -n | tail -1)\" -n Server -c /Users/zain/.tycho 'tycho serve --port 7373'",
-	"tmux attach -t Tycho"
+	"tmux has-session -t tycho 2>/dev/null || tmux new-session -d -s tycho -c /Users/zain/.tycho -n hq",
+	"tmux move-window -s tycho:0 -t tycho:1 2>/dev/null || true",
+	"amux launch tycho",
+	"tmux list-windows -t tycho -F '#W' | grep -qx Server || tmux new-window -d -a -t \"tycho:$(tmux list-windows -t tycho -F '#I' | sort -n | tail -1)\" -n Server -c /Users/zain/.tycho 'tycho serve --port 7373'",
+	"tmux attach -t tycho"
 ]
 
 [params]

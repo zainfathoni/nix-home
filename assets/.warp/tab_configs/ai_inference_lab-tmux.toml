@@ -7,8 +7,8 @@ type = "terminal"
 is_focused = true
 directory = "/Users/zain/Code/GitHub/zainfathoni/ai-inference-lab"
 commands = [
-"amux launch ai-inference-lab AI Inference Lab",
-"tmux attach -t AI Inference Lab"
+"amux launch ai-inference-lab",
+"tmux attach -t ai-inference-lab"
 ]
 
 [params]

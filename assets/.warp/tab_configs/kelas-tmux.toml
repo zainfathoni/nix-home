@@ -7,8 +7,8 @@ type = "terminal"
 is_focused = true
 directory = "/Users/zain/Code/GitHub/zainfathoni/kelas.rumahberbagi.com"
 commands = [
-    "amux launch kelas Kelas",
-    "tmux attach -t Kelas"
+    "amux launch kelas",
+    "tmux attach -t kelas"
 ]
 
 [params]

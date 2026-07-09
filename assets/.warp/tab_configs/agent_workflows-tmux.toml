@@ -7,8 +7,8 @@ type = "terminal"
 is_focused = true
 directory = "/Users/zain/Code/GitHub/zainfathoni/agent-workflows"
 commands = [
-"amux launch agent-workflows Agent Workflows",
-"tmux attach -t Agent Workflows"
+"amux launch agent-workflows",
+"tmux attach -t agent-workflows"
 ]
 
 [params]

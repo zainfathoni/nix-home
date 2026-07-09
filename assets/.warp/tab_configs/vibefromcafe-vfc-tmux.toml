@@ -7,8 +7,8 @@ type = "terminal"
 is_focused = true
 directory = "/Users/zain/Code/GitHub/zainfathoni/vibefromcafe"
 commands = [
-"amux launch vfc VFC",
-"tmux attach -t VFC"
+"amux launch vfc",
+"tmux attach -t vfc"
 ]
 
 [params]

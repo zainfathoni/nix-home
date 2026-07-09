@@ -7,8 +7,8 @@ type = "terminal"
 is_focused = true
 directory = "/Users/zain/Code/GitHub/zainfathoni/nix-home"
 commands = [
-    "amux launch nix Nix",
-    "tmux attach -t Nix"
+    "amux launch nix",
+    "tmux attach -t nix"
 ]
 
 [params]
