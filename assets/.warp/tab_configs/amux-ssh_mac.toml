@@ -1,0 +1,11 @@
+name = "SSH to mac"
+color = "yellow"
+
+[[panes]]
+id = "p1"
+type = "terminal"
+is_focused = true
+directory = "/Users/zain/Code/GitHub/zainfathoni/amux"
+commands = ["ssh zain@mac"]
+
+[params]
