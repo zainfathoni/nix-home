@@ -68,6 +68,7 @@
     # binary instead of being shadowed by an older package-managed install.
     zsh.initExtraFirst = ''
       path=("$HOME/.local/bin" ''${path:#$HOME/.local/bin})
+      fpath=("$HOME/.grok/completions/zsh" ''${fpath:#$HOME/.grok/completions/zsh})
     '';
 
     # Skip compinit's security audit for Nix-managed completions. On macOS, zsh
