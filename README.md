@@ -198,7 +198,7 @@ password to apply all the changes.
 
 `amux` is intentionally not installed through Nix. It should live in
 `$HOME/.local/bin` so the active binary can be updated independently of this
-flake by [`amux self-update`](https://github.com/zainfathoni/amux/issues/21).
+flake by [`amux update`](https://github.com/zainfathoni/amux#manual-release).
 
 Home Manager keeps `$HOME/.local/bin` first in interactive Zsh sessions, so a
 user-local `amux` should win over any older package-managed binary. After
@@ -224,19 +224,21 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 gh release download \
   --repo zainfathoni/amux \
-  --pattern "amux-${os}-${arch}.tar.gz" \
+  --pattern "amux-${os}-${arch}.tar.gz*" \
   --dir "$tmpdir"
 
 archive="$tmpdir/amux-${os}-${arch}.tar.gz"
+(cd "$tmpdir" && shasum -a 256 -c "amux-${os}-${arch}.tar.gz.sha256")
 tar -xzf "$archive" -C "$tmpdir"
 install -m 0755 "$tmpdir/amux-${os}-${arch}/amux" "$HOME/.local/bin/amux"
 
 hash -r
 which amux
 amux --version
+amux install doctor
 ```
 
-Use `amux self-update` for future `amux` updates instead of editing this Nix
+Use `amux update` for future `amux` updates instead of editing this Nix
 configuration.
 
 ### 6. Import GPG Keys

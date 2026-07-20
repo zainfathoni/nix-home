@@ -64,7 +64,7 @@
     zsh.enable = true;
 
     # Keep user-local self-managed tools ahead of package-managed binaries in
-    # interactive shells so commands like `amux self-update` update the active
+    # interactive shells so commands like `amux update` update the active
     # binary instead of being shadowed by an older package-managed install.
     zsh.initExtraFirst = ''
       path=("$HOME/.local/bin" ''${path:#$HOME/.local/bin})
