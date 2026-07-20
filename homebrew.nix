@@ -16,7 +16,6 @@
     "firewalker06/tycho"
     "homebrew/services"
     "oven-sh/bun"
-    "planetscale/tap"
     "shopify/shopify"
     "sst/tap"
   ];
@@ -41,7 +40,6 @@
     "mysql"
     "pyenv"
     "rbenv"
-    "planetscale/tap/pscale"
     "shopify-cli"
     "sst/tap/opencode"
     "tmux"
@@ -49,7 +47,6 @@
     "uv"
     "volta"
     "yadm"
-    "obsidian-cli"
   ];
 
   # Prefer installing application from the Mac App Store
