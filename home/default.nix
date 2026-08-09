@@ -20,6 +20,7 @@
   programs.home-manager.enable = true;
 
   imports = [
+    ./public-inputs.nix # Generic final store-safe caller inputs
     ./assets.nix # Symlinked assets configurations
     ./packages.nix # Packages that are not included in `nix-darwin` and `home-manager`
     ./shells.nix # Shell configurations
