@@ -20,7 +20,23 @@
     let
       system = "aarch64-darwin";
       pkgs = nixpkgs.legacyPackages.${system};
-      lib = pkgs.lib;
+      nixpkgsLib = pkgs.lib;
+      mkDarwinConfiguration = { extraHomeModules ? [ ] }:
+        darwin.lib.darwinSystem {
+          inherit system;
+          modules = [
+            ./configuration.nix
+            ./homebrew.nix
+            home-manager.darwinModules.home-manager
+            {
+              home-manager.useGlobalPkgs = true;
+              home-manager.useUserPackages = true;
+              home-manager.users.zain = {
+                imports = [ ./home ] ++ extraHomeModules;
+              };
+            }
+          ];
+        };
       syntheticPackage = pkgs.writeShellScriptBin "public-home-check" ''
         echo public-home-check
       '';
@@ -35,7 +51,17 @@
               homeDirectory = "/Users/synthetic";
               stateVersion = "24.11";
             };
-            publicHome = {
+            nixHome.realization = {
+              packages = [ syntheticPackage ];
+              files.".config/public-home/source" = syntheticSource;
+            };
+          }
+        ];
+      };
+      syntheticDarwin = mkDarwinConfiguration {
+        extraHomeModules = [
+          {
+            nixHome.realization = {
               packages = [ syntheticPackage ];
               files.".config/public-home/source" = syntheticSource;
             };
@@ -47,34 +73,15 @@
 
       # We need a darwinConfigurations output to actually have a `nix-darwin` configuration.
       # https://github.com/LnL7/nix-darwin#flakes-experimental
-      darwinConfigurations.zain = darwin.lib.darwinSystem {
-        inherit system;
-        modules = [
-          # Main `nix-darwin` configuration
-          # https://github.com/LnL7/nix-darwin#flakes-experimental
-          ./configuration.nix
+      darwinConfigurations.zain = mkDarwinConfiguration { };
 
-          # Homebrew configuration
-          # https://xyno.space/post/nix-darwin-introduction
-          ./homebrew.nix
-
-          # The flake-based setup of the Home Manager `nix-darwin` module
-          # https://nix-community.github.io/home-manager/index.html#sec-flakes-nix-darwin-module
-          home-manager.darwinModules.home-manager
-          {
-            home-manager.useGlobalPkgs = true;
-            home-manager.useUserPackages = true;
-            home-manager.users.zain = import ./home;
-
-            # Optionally, use home-manager.extraSpecialArgs to pass
-            # arguments to home.nix
-          }
-        ];
-      };
+      lib.mkDarwinConfiguration = mkDarwinConfiguration;
 
       checks.${system}.public-home-inputs =
-        assert lib.elem syntheticPackage syntheticHome.config.home.packages;
+        assert nixpkgsLib.elem syntheticPackage syntheticHome.config.home.packages;
         assert syntheticHome.config.home.file.".config/public-home/source".source == syntheticSource;
+        assert nixpkgsLib.elem syntheticPackage syntheticDarwin.config.home-manager.users.zain.home.packages;
+        assert syntheticDarwin.config.home-manager.users.zain.home.file.".config/public-home/source".source == syntheticSource;
         pkgs.runCommand "public-home-inputs-check" { } ''
           test -x ${syntheticHome.activationPackage}/activate
           test -x ${syntheticPackage}/bin/public-home-check

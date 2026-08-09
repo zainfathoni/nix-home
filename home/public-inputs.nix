@@ -1,6 +1,6 @@
 { config, lib, ... }:
 let
-  cfg = config.publicHome;
+  cfg = config.nixHome.realization;
   isNormalizedRelative = destination:
     destination != ""
     && !(lib.hasPrefix "/" destination)
@@ -9,7 +9,7 @@ let
   isStoreSource = source: lib.hasPrefix "${builtins.storeDir}/" (toString source);
 in
 {
-  options.publicHome = {
+  options.nixHome.realization = {
     packages = lib.mkOption {
       type = lib.types.listOf lib.types.package;
       default = [ ];
@@ -27,11 +27,11 @@ in
     assertions = [
       {
         assertion = lib.all isNormalizedRelative (lib.attrNames cfg.files);
-        message = "publicHome.files destinations must be normalized relative home paths";
+        message = "nixHome.realization.files destinations must be normalized relative home paths";
       }
       {
         assertion = lib.all isStoreSource (lib.attrValues cfg.files);
-        message = "publicHome.files sources must already be in the Nix store";
+        message = "nixHome.realization.files sources must already be in the Nix store";
       }
     ];
 
