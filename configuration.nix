@@ -1,4 +1,85 @@
 { pkgs, ... }:
+let
+  sshTailnetConfig = pkgs.writeText "sshd-tailnet.conf" ''
+    Port 22022
+    ListenAddress 127.0.0.1
+    PidFile none
+
+    HostKey /etc/ssh/ssh_host_ed25519_key
+    HostKey /etc/ssh/ssh_host_ecdsa_key
+    HostKey /etc/ssh/ssh_host_rsa_key
+
+    UsePAM yes
+    AuthenticationMethods publickey
+    PubkeyAuthentication yes
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    PermitEmptyPasswords no
+    PermitRootLogin no
+    AllowUsers zain
+    AuthorizedKeysFile .ssh/authorized_keys
+    StrictModes yes
+
+    DisableForwarding yes
+    PermitTunnel no
+    X11Forwarding no
+
+    AcceptEnv LANG LC_*
+    Subsystem sftp /usr/libexec/sftp-server
+  '';
+
+  sshTailnetDaemon = pkgs.writeShellScript "ssh-tailnet-daemon" ''
+    set -eu
+
+    /usr/bin/ssh-keygen -A
+    /usr/sbin/sshd -t -f ${sshTailnetConfig}
+    exec /usr/sbin/sshd -D -e -f ${sshTailnetConfig}
+  '';
+
+  sshTailnetServeReconciler = pkgs.writeShellScript "ssh-tailnet-serve-reconciler" ''
+    set -u
+
+    tailscale=/usr/local/bin/tailscale
+    expected_tailnet=zainfathoni.github
+    expected_forward=127.0.0.1:22022
+    attempt=0
+
+    while [ "$attempt" -lt 60 ]; do
+      attempt=$((attempt + 1))
+
+      if [ -x "$tailscale" ]; then
+        status_json=$("$tailscale" status --json 2>/dev/null || true)
+        backend_state=$(printf '%s' "$status_json" | ${pkgs.jq}/bin/jq -r '.BackendState // empty' 2>/dev/null || true)
+        current_tailnet=$(printf '%s' "$status_json" | ${pkgs.jq}/bin/jq -r '.CurrentTailnet.Name // empty' 2>/dev/null || true)
+
+        if [ "$backend_state" = "Running" ] && [ "$current_tailnet" != "$expected_tailnet" ]; then
+          exit 0
+        fi
+
+        if [ "$backend_state" = "Running" ] && [ "$current_tailnet" = "$expected_tailnet" ]; then
+          serve_json=$("$tailscale" serve status --json 2>/dev/null || true)
+          current_forward=$(printf '%s' "$serve_json" | ${pkgs.jq}/bin/jq -r '.TCP["22"].TCPForward // empty' 2>/dev/null || true)
+
+          if [ "$current_forward" = "$expected_forward" ]; then
+            exit 0
+          fi
+
+          if "$tailscale" serve --bg --yes --tcp=22 "tcp://$expected_forward"; then
+            serve_json=$("$tailscale" serve status --json 2>/dev/null || true)
+            current_forward=$(printf '%s' "$serve_json" | ${pkgs.jq}/bin/jq -r '.TCP["22"].TCPForward // empty' 2>/dev/null || true)
+            if [ "$current_forward" = "$expected_forward" ]; then
+              exit 0
+            fi
+          fi
+        fi
+      fi
+
+      /bin/sleep 5
+    done
+
+    exit 1
+  '';
+in
 {
   # Make sure the nix daemon always runs
   # Without this configuration, the switch command won't work due to this error:
@@ -36,6 +117,36 @@
   # https://github.com/nix-community/home-manager/issues/4026#issuecomment-1565974702
   # https://daiderd.com/nix-darwin/manual/index.html#opt-users.users._name_.home
   users.users.zain.home = "/Users/zain";
+
+  # Keep Apple's LAN-visible, socket-activated Remote Login service disabled.
+  # A dedicated sshd listens only on loopback; Tailscale Serve owns the
+  # tailnet-only TCP/22 boundary and preserves unrelated Serve mappings.
+  services.openssh.enable = false;
+
+  launchd.daemons.ssh-tailnet = {
+    command = sshTailnetDaemon;
+    serviceConfig = {
+      Label = "dev.zainf.ssh-tailnet";
+      KeepAlive = true;
+      ProcessType = "Interactive";
+      ThrottleInterval = 10;
+      ExitTimeOut = 10;
+      StandardOutPath = "/var/log/dev.zainf.ssh-tailnet.log";
+      StandardErrorPath = "/var/log/dev.zainf.ssh-tailnet.log";
+    };
+  };
+
+  launchd.user.agents.ssh-tailnet-serve = {
+    command = sshTailnetServeReconciler;
+    serviceConfig = {
+      Label = "dev.zainf.ssh-tailnet-serve";
+      RunAtLoad = true;
+      StartInterval = 300;
+      ProcessType = "Background";
+      StandardOutPath = "/Users/zain/Library/Logs/dev.zainf.ssh-tailnet-serve.log";
+      StandardErrorPath = "/Users/zain/Library/Logs/dev.zainf.ssh-tailnet-serve.log";
+    };
+  };
 
   # nix-darwin system stateVersion
   #@see https://mynixos.com/nix-darwin/option/system.stateVersion
