@@ -58,7 +58,7 @@
           }
         ];
       };
-      syntheticDarwin = mkDarwinConfiguration {
+      syntheticDarwin = self.lib.mkDarwinConfiguration {
         extraHomeModules = [
           {
             nixHome.realization = {
@@ -73,7 +73,7 @@
 
       # We need a darwinConfigurations output to actually have a `nix-darwin` configuration.
       # https://github.com/LnL7/nix-darwin#flakes-experimental
-      darwinConfigurations.zain = mkDarwinConfiguration { };
+      darwinConfigurations.zain = self.lib.mkDarwinConfiguration { };
 
       lib.mkDarwinConfiguration = mkDarwinConfiguration;
 
