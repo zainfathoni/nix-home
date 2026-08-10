@@ -1,4 +1,13 @@
-{ ... }:
+{ pkgs, ... }:
+
+let
+  nixHome = pkgs.writeTextFile {
+    name = "nix-home";
+    destination = "/bin/nix-home";
+    executable = true;
+    text = builtins.readFile ../scripts/nix-home;
+  };
+in
 
 {
   # https://nix-community.github.io/home-manager/index.html#sec-usage-configuration
@@ -18,6 +27,10 @@
   # Let Home Manager install and manage itself.
   # https://nix-community.github.io/home-manager/options.html#opt-programs.home-manager.enable
   programs.home-manager.enable = true;
+
+  # Karsa's strict public Darwin realization boundary.
+  home.packages = [ nixHome ];
+  home.file.".local/bin/nix-home".source = "${nixHome}/bin/nix-home";
 
   imports = [
     ./public-inputs.nix # Generic final store-safe caller inputs

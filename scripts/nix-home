@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""Strict, repository-owned Karsa Darwin home realization boundary."""
+import base64
+import hashlib
+import json
+import os
+import shutil
+import sys
+import tempfile
+from pathlib import Path
+
+MAX_INPUT = 384 * 1024 * 1024
+NAMES = ("karsa", "karsa-composition")
+TARGETS = tuple(f".local/bin/{name}" for name in NAMES)
+
+
+def deny(condition=True):
+    if condition:
+        raise ValueError("request denied")
+
+
+def exact(value, keys):
+    deny(type(value) is not dict or set(value) != set(keys))
+
+
+def relative(value):
+    deny(type(value) is not str or not value or value.startswith("/") or
+         any(part in ("", ".", "..") for part in value.split("/")))
+    return value
+
+
+def read_request(action):
+    deny(sys.argv != [sys.argv[0], action, "--json-stdin"])
+    raw = sys.stdin.buffer.read(MAX_INPUT + 1)
+    deny(len(raw) > MAX_INPUT or not raw.endswith(b"\n"))
+    try:
+        value = json.loads(raw)
+    except Exception:
+        deny()
+    if action == "rollback":
+        exact(value, ("schema", "action"))
+        deny(value != {"schema": 1, "action": "rollback"})
+        return value
+    exact(value, ("schema", "action", "binaries", "nixHome"))
+    deny(value["schema"] != 1 or value["action"] != action)
+    exact(value["nixHome"], ("realization",))
+    realization = value["nixHome"]["realization"]
+    exact(realization, ("packages", "files"))
+    deny(type(realization["packages"]) is not list or
+         any(type(x) is not str or not x.startswith("/nix/store/") for x in realization["packages"]))
+    deny(type(realization["files"]) is not dict)
+    for target, source in realization["files"].items():
+        relative(target)
+        deny(type(source) is not str or not source.startswith("/nix/store/"))
+    deny(type(value["binaries"]) is not list or len(value["binaries"]) != 2)
+    for i, binary in enumerate(value["binaries"]):
+        exact(binary, ("name", "target", "mode", "sha256", "bytesBase64"))
+        deny(binary["name"] != NAMES[i] or binary["target"] != TARGETS[i] or
+             binary["mode"] != "0755" or type(binary["sha256"]) is not str or
+             len(binary["sha256"]) != 64 or any(c not in "0123456789abcdef" for c in binary["sha256"]))
+        try:
+            data = base64.b64decode(binary["bytesBase64"], validate=True)
+        except Exception:
+            deny()
+        deny(hashlib.sha256(data).hexdigest() != binary["sha256"])
+        binary["_bytes"] = data
+    return value
+
+
+def paths(home):
+    root = home / ".local/state/nix-home"
+    return root, root / "current", root / "previous"
+
+
+def ancestors_safe(home, target):
+    current = home
+    for part in Path(target).parts[:-1]:
+        current /= part
+        deny(current.is_symlink() or (current.exists() and not current.is_dir()))
+
+
+def owned(path, root):
+    if not path.is_symlink():
+        return False
+    try:
+        Path(os.path.realpath(path)).relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def requested_targets(dto):
+    targets = list(TARGETS) + list(dto["nixHome"]["realization"]["files"])
+    for package in dto["nixHome"]["realization"]["packages"]:
+        package_bin = Path(package) / "bin"
+        if package_bin.is_dir():
+            for executable in sorted(package_bin.iterdir()):
+                deny(executable.name in ("", ".", "..") or "/" in executable.name)
+                targets.append(".local/bin/" + executable.name)
+    deny(len(targets) != len(set(targets)))
+    return targets
+
+
+def preflight(dto, home, require_previous=False):
+    root, current, previous = paths(home)
+    deny(home.is_symlink() or (root.exists() and root.is_symlink()))
+    if require_previous:
+        deny(not previous.is_symlink() or not Path(os.path.realpath(previous)).is_dir())
+        return
+    requested = requested_targets(dto)
+    for target in requested:
+        ancestors_safe(home, target)
+        path = home / target
+        deny((path.exists() or path.is_symlink()) and not owned(path, root))
+    for source in dto["nixHome"]["realization"]["packages"] + list(dto["nixHome"]["realization"]["files"].values()):
+        deny(not Path(source).exists())
+    path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+    local_bin = str(home / ".local/bin")
+    deny(local_bin not in path_dirs)
+    local_index = path_dirs.index(local_bin)
+    for directory in path_dirs[:local_index]:
+        deny(any((Path(directory) / name).exists() for name in NAMES))
+
+
+def atomic_link(target, link):
+    link.parent.mkdir(parents=True, exist_ok=True)
+    temporary = link.with_name(link.name + ".nix-home-new")
+    temporary.unlink(missing_ok=True)
+    temporary.symlink_to(target)
+    os.replace(temporary, link)
+
+
+def publish_generation(home, generation):
+    root, current, previous = paths(home)
+    old = Path(os.path.realpath(current)) if current.is_symlink() else None
+    manifest = json.loads((generation / "manifest.json").read_text())
+    old_manifest = json.loads((old / "manifest.json").read_text()) if old else {"targets": []}
+    new_targets = manifest["targets"]
+    for target in new_targets:
+        source = generation / "home" / target
+        atomic_link(source, home / target)
+    for target in set(old_manifest["targets"]) - set(new_targets):
+        path = home / target
+        if owned(path, root):
+            path.unlink()
+    atomic_link(generation, current)
+    if old and old != generation:
+        atomic_link(old, previous)
+
+
+def realize(dto, home):
+    preflight(dto, home)
+    root, current, _ = paths(home)
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    canonical = json.dumps({k: v for k, v in dto.items() if k != "action"}, sort_keys=True,
+                           default=lambda _: None).encode()
+    # bytesBase64 is public but avoid retaining duplicate payload in metadata.
+    identity = hashlib.sha256(canonical).hexdigest()
+    generation = root / "generations" / identity
+    if not generation.exists():
+        stage = Path(tempfile.mkdtemp(prefix=".stage-", dir=root))
+        try:
+            target_root = stage / "home"
+            targets = requested_targets(dto)
+            for binary in dto["binaries"]:
+                destination = target_root / binary["target"]
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(binary["_bytes"])
+                destination.chmod(0o755)
+            for target, source in dto["nixHome"]["realization"]["files"].items():
+                destination = target_root / target
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.symlink_to(source)
+            for package in dto["nixHome"]["realization"]["packages"]:
+                package_bin = Path(package) / "bin"
+                if package_bin.is_dir():
+                    for executable in sorted(package_bin.iterdir()):
+                        destination = target_root / ".local/bin" / executable.name
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        destination.symlink_to(executable)
+            (stage / "manifest.json").write_text(json.dumps({"targets": targets, "packages": dto["nixHome"]["realization"]["packages"]}))
+            generation.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(stage, generation)
+        finally:
+            shutil.rmtree(stage, ignore_errors=True)
+    publish_generation(home, generation)
+    for name in NAMES:
+        deny(shutil.which(name) != str(home / ".local/bin" / name))
+    return {"pathPrecedence": "proven", "binaries": [
+        {k: binary[k] for k in ("name", "target", "mode", "sha256")} for binary in dto["binaries"]]}
+
+
+def rollback(home):
+    preflight(None, home, True)
+    root, current, previous = paths(home)
+    prior = Path(os.path.realpath(previous))
+    now = Path(os.path.realpath(current))
+    publish_generation(home, prior)
+    atomic_link(now, previous)
+
+
+def main():
+    deny(len(sys.argv) < 2 or sys.argv[1] not in ("preflight", "realize", "rollback"))
+    action = sys.argv[1]
+    dto = read_request(action)
+    home = Path(os.environ["HOME"])
+    deny(not home.is_absolute())
+    if action == "preflight":
+        preflight(dto, home)
+    elif action == "realize":
+        print(json.dumps(realize(dto, home), separators=(",", ":")))
+    else:
+        rollback(home)
+
+
+try:
+    main()
+except Exception:
+    print("nix-home operation failed", file=sys.stderr)
+    sys.exit(1)
