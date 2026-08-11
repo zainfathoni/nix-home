@@ -1,12 +1,13 @@
 { pkgs, ... }:
 
 let
-  nixHome = pkgs.writeTextFile {
-    name = "nix-home";
-    destination = "/bin/nix-home";
-    executable = true;
-    text = builtins.readFile ../scripts/nix-home;
+  nixHomeSource = pkgs.replaceVars ../scripts/nix-home {
+    PYTHON = "${pkgs.python3}/bin/python3";
+    NIX_STORE = "${pkgs.nix}/bin/nix-store";
   };
+  nixHome = pkgs.runCommand "nix-home" { } ''
+    install -Dm755 ${nixHomeSource} $out/bin/nix-home
+  '';
 in
 
 {

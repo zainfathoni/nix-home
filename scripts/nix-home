@@ -1,31 +1,94 @@
-#!/usr/bin/env python3
-"""Strict, repository-owned Karsa Darwin home realization boundary."""
+#!@PYTHON@
+"""Karsa's fixed-topology, repository-owned Darwin home realizer."""
 import base64
+import binascii
+import fcntl
 import hashlib
 import json
 import os
-import shutil
+import re
+import stat
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 MAX_INPUT = 384 * 1024 * 1024
+MAX_BINARY = 192 * 1024 * 1024
+MAX_PACKAGES = 4096
+MAX_FILES = 16384
+MAX_TARGET = 1024
+MAX_CHAIN = 16
 NAMES = ("karsa", "karsa-composition")
-TARGETS = tuple(f".local/bin/{name}" for name in NAMES)
+TARGETS = tuple(".local/bin/" + n for n in NAMES)
+STORE_RE = re.compile(r"^/nix/store/[0-9a-df-np-sv-z]{32}-(?!\.{1,2}(?:-|$))[0-9A-Za-z+._?=-]{1,211}$")
+GEN_RE = re.compile(r"generations/[0-9a-f]{64}")
+OWNER = "zainfathoni/nix-home:darwin-home-realizer"
+VERSION = 1
+PYTHON = "@PYTHON@"
+NIX_STORE = "@NIX_STORE@"
+
+
+class Denied(Exception):
+    pass
 
 
 def deny(condition=True):
     if condition:
-        raise ValueError("request denied")
+        raise Denied()
 
 
 def exact(value, keys):
     deny(type(value) is not dict or set(value) != set(keys))
 
 
+def checkpoint(name):
+    if os.environ.get("NIX_HOME_TESTING") == "1" and os.environ.get("NIX_HOME_FAULT") == name:
+        os._exit(75)
+
+
+def flush_file(path):
+    with path.open("rb") as stream:
+        os.fsync(stream.fileno())
+
+
+def flush_dir(path):
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def write_exclusive(path, data, mode=0o600):
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    try:
+        with os.fdopen(descriptor, "wb", closefd=False) as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        os.close(descriptor)
+
+
+def atomic_json(path, value, point):
+    temporary = path.parent / "staging" / (path.name + "." + next(tempfile._get_candidate_names()))
+    write_exclusive(temporary, (json.dumps(value, separators=(",", ":"), sort_keys=True) + "\n").encode())
+    checkpoint(point + ".flush")
+    os.replace(temporary, path)
+    checkpoint(point + ".rename")
+    flush_dir(path.parent)
+
+
 def relative(value):
-    deny(type(value) is not str or not value or value.startswith("/") or
-         any(part in ("", ".", "..") for part in value.split("/")))
+    deny(type(value) is not str or len(value.encode()) > MAX_TARGET or not value)
+    deny(value.startswith("/") or "\\" in value or any(ord(character) < 32 or ord(character) == 127 for character in value))
+    parts = value.split("/")
+    deny(any(not part or part in (".", "..") or len(part.encode()) > 255 for part in parts))
+    return value
+
+
+def store_path(value):
+    deny(type(value) is not str or len(value.encode()) > 4096 or STORE_RE.fullmatch(value) is None)
     return value
 
 
@@ -36,7 +99,7 @@ def read_request(action):
     try:
         value = json.loads(raw)
     except Exception:
-        deny()
+        raise Denied()
     if action == "rollback":
         exact(value, ("schema", "action"))
         deny(value != {"schema": 1, "action": "rollback"})
@@ -46,171 +109,405 @@ def read_request(action):
     exact(value["nixHome"], ("realization",))
     realization = value["nixHome"]["realization"]
     exact(realization, ("packages", "files"))
-    deny(type(realization["packages"]) is not list or
-         any(type(x) is not str or not x.startswith("/nix/store/") for x in realization["packages"]))
-    deny(type(realization["files"]) is not dict)
+    deny(type(realization["packages"]) is not list or len(realization["packages"]) > MAX_PACKAGES)
+    deny(type(realization["files"]) is not dict or len(realization["files"]) > MAX_FILES)
+    for package in realization["packages"]:
+        store_path(package)
+    deny(len(realization["packages"]) != len(set(realization["packages"])))
     for target, source in realization["files"].items():
         relative(target)
-        deny(type(source) is not str or not source.startswith("/nix/store/"))
+        store_path(source)
     deny(type(value["binaries"]) is not list or len(value["binaries"]) != 2)
-    for i, binary in enumerate(value["binaries"]):
+    for index, binary in enumerate(value["binaries"]):
         exact(binary, ("name", "target", "mode", "sha256", "bytesBase64"))
-        deny(binary["name"] != NAMES[i] or binary["target"] != TARGETS[i] or
-             binary["mode"] != "0755" or type(binary["sha256"]) is not str or
-             len(binary["sha256"]) != 64 or any(c not in "0123456789abcdef" for c in binary["sha256"]))
+        deny(binary["name"] != NAMES[index] or binary["target"] != TARGETS[index] or binary["mode"] != "0755")
+        deny(type(binary["sha256"]) is not str or re.fullmatch(r"[0-9a-f]{64}", binary["sha256"]) is None)
+        deny(type(binary["bytesBase64"]) is not str or len(binary["bytesBase64"]) > (MAX_BINARY * 4 // 3 + 4))
         try:
             data = base64.b64decode(binary["bytesBase64"], validate=True)
-        except Exception:
-            deny()
-        deny(hashlib.sha256(data).hexdigest() != binary["sha256"])
+        except (ValueError, binascii.Error):
+            raise Denied()
+        deny(len(data) > MAX_BINARY or hashlib.sha256(data).hexdigest() != binary["sha256"])
         binary["_bytes"] = data
     return value
 
 
-def paths(home):
+def lstat(path):
+    try:
+        return os.lstat(path)
+    except FileNotFoundError:
+        return None
+
+
+def require_regular(path, mode=None):
+    info = lstat(path)
+    deny(info is None or not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1)
+    if mode is not None:
+        deny(stat.S_IMODE(info.st_mode) != mode)
+    return info
+
+
+def require_dir(path, mode=0o700):
+    info = lstat(path)
+    deny(info is None or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != mode)
+
+
+def safe_ancestors(home, target, create=False):
+    current = home
+    require_dir(home, stat.S_IMODE(os.lstat(home).st_mode))
+    for part in PurePosixPath(target).parts[:-1]:
+        current /= part
+        info = lstat(current)
+        if info is None and create:
+            os.mkdir(current, 0o700)
+            info = lstat(current)
+        deny(info is not None and not stat.S_ISDIR(info.st_mode))
+        deny(info is not None and info.st_uid != os.getuid())
+
+
+def root_paths(home):
     root = home / ".local/state/nix-home"
     return root, root / "current", root / "previous"
 
 
-def ancestors_safe(home, target):
-    current = home
-    for part in Path(target).parts[:-1]:
-        current /= part
-        deny(current.is_symlink() or (current.exists() and not current.is_dir()))
+def marker_value():
+    return {"owner": OWNER, "schema": VERSION, "uid": os.getuid(), "mode": "0700", "layout": "fixed-topology-selector-v1"}
 
 
-def owned(path, root):
-    if not path.is_symlink():
-        return False
+def initialize_root(home):
+    root, _, _ = root_paths(home)
+    safe_ancestors(home, ".local/state/nix-home", True)
+    if lstat(root) is None:
+        os.mkdir(root, 0o700)
+        write_exclusive(root / "owner.json", (json.dumps(marker_value(), separators=(",", ":"), sort_keys=True) + "\n").encode())
+        os.mkdir(root / "generations", 0o700)
+        os.mkdir(root / "staging", 0o700)
+        os.mkdir(root / "gcroots", 0o700)
+        write_exclusive(root / "lock", b"", 0o600)
+        flush_dir(root)
+    validate_root(root)
+    return root
+
+
+def validate_root(root):
+    require_dir(root)
+    require_regular(root / "owner.json", 0o600)
     try:
-        Path(os.path.realpath(path)).relative_to(root)
-        return True
-    except ValueError:
-        return False
+        marker = json.loads((root / "owner.json").read_text())
+    except Exception:
+        raise Denied()
+    deny(marker != marker_value())
+    for name in ("generations", "staging", "gcroots"):
+        require_dir(root / name)
+    require_regular(root / "lock", 0o600)
+    allowed = {"owner.json", "generations", "staging", "gcroots", "lock", "current", "previous", "transaction.json"}
+    deny(any(entry.name not in allowed for entry in os.scandir(root)))
 
 
-def requested_targets(dto):
-    targets = list(TARGETS) + list(dto["nixHome"]["realization"]["files"])
+def selector(path, required=False):
+    info = lstat(path)
+    if info is None and not required:
+        return None
+    deny(info is None or not stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid())
+    target = os.readlink(path)
+    deny(GEN_RE.fullmatch(target) is None)
+    return target
+
+
+def topology_collision(targets):
+    ordered = sorted(targets)
+    deny(len(ordered) != len(set(ordered)))
+    for left, right in zip(ordered, ordered[1:]):
+        deny(right.startswith(left + "/"))
+
+
+def expand(dto):
+    entries = [(target, "binary", binary["_bytes"], binary["sha256"]) for target, binary in zip(TARGETS, dto["binaries"])]
+    for target, source in dto["nixHome"]["realization"]["files"].items():
+        entries.append((target, "store", source, None))
     for package in dto["nixHome"]["realization"]["packages"]:
         package_bin = Path(package) / "bin"
-        if package_bin.is_dir():
-            for executable in sorted(package_bin.iterdir()):
-                deny(executable.name in ("", ".", "..") or "/" in executable.name)
-                targets.append(".local/bin/" + executable.name)
-    deny(len(targets) != len(set(targets)))
-    return targets
+        info = lstat(package_bin)
+        if info is None:
+            continue
+        deny(not stat.S_ISDIR(info.st_mode))
+        for item in sorted(os.scandir(package_bin), key=lambda entry: entry.name):
+            deny("/" in item.name or item.name in ("", ".", ".."))
+            entries.append((relative(".local/bin/" + item.name), "store", package + "/bin/" + item.name, None))
+    topology_collision([entry[0] for entry in entries])
+    reserved = [".local/state/nix-home"]
+    deny(any(a == b or a.startswith(b + "/") or b.startswith(a + "/") for a in [e[0] for e in entries] for b in reserved))
+    return entries
 
 
-def preflight(dto, home, require_previous=False):
-    root, current, previous = paths(home)
-    deny(home.is_symlink() or (root.exists() and root.is_symlink()))
-    if require_previous:
-        deny(not previous.is_symlink() or not Path(os.path.realpath(previous)).is_dir())
+def exposure_target(home, root, target):
+    return os.path.relpath(root / "current/home" / target, (home / target).parent)
+
+
+def validate_exposures(home, root, targets, allow_missing):
+    for target in targets:
+        safe_ancestors(home, target)
+        path = home / target
+        info = lstat(path)
+        if info is None and allow_missing:
+            continue
+        deny(info is None or not stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid())
+        deny(os.readlink(path) != exposure_target(home, root, target))
+
+
+def generation_manifest(root, selected):
+    deny(GEN_RE.fullmatch(selected) is None)
+    generation = root / selected
+    require_dir(generation)
+    require_dir(generation / "home")
+    require_regular(generation / "manifest.json", 0o600)
+    try:
+        manifest = json.loads((generation / "manifest.json").read_text())
+    except Exception:
+        raise Denied()
+    exact(manifest, ("owner", "schema", "identity", "targets", "storeRoots", "binaries"))
+    deny(manifest["owner"] != OWNER or manifest["schema"] != VERSION or selected != "generations/" + manifest["identity"])
+    deny(type(manifest["targets"]) is not list or any(relative(x) != x for x in manifest["targets"]))
+    topology_collision(manifest["targets"])
+    return generation, manifest
+
+
+def identity_for(dto, entries):
+    public = {"schema": VERSION, "targets": [(target, kind, value if kind == "store" else digest) for target, kind, value, digest in entries]}
+    return hashlib.sha256(json.dumps(public, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+
+
+def stage_generation(root, dto, entries):
+    identity = identity_for(dto, entries)
+    selected = "generations/" + identity
+    generation = root / selected
+    if lstat(generation) is not None:
+        _, manifest = generation_manifest(root, selected)
+        deny(manifest["targets"] != [e[0] for e in entries])
+        return selected, manifest
+    stage = Path(tempfile.mkdtemp(prefix="stage-", dir=root / "staging"))
+    os.chmod(stage, 0o700)
+    try:
+        os.mkdir(stage / "home", 0o700)
+        for index, (target, kind, value, digest) in enumerate(entries):
+            checkpoint("stage.before")
+            destination = stage / "home" / target
+            destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if kind == "binary":
+                write_exclusive(destination, value, 0o755)
+            else:
+                os.symlink(value, destination)
+            checkpoint("stage.after")
+        store_roots = sorted(set(dto["nixHome"]["realization"]["packages"] + list(dto["nixHome"]["realization"]["files"].values())))
+        manifest = {"owner": OWNER, "schema": VERSION, "identity": identity, "targets": [e[0] for e in entries], "storeRoots": store_roots,
+                    "binaries": [{"name": b["name"], "target": b["target"], "mode": "0755", "sha256": b["sha256"]} for b in dto["binaries"]]}
+        write_exclusive(stage / "manifest.json", (json.dumps(manifest, separators=(",", ":"), sort_keys=True) + "\n").encode())
+        checkpoint("generation.before_flush")
+        flush_dir(stage / "home")
+        flush_dir(stage)
+        checkpoint("generation.after_flush")
+        os.mkdir(root / "gcroots" / identity, 0o700)
+        for index, store in enumerate(store_roots):
+            # nix-store creates the root exclusively and validates the store object.
+            result = os.spawnv(os.P_WAIT, NIX_STORE, [NIX_STORE, "--add-root", str(root / "gcroots" / identity / str(index)), "-r", store])
+            deny(result != 0)
+        checkpoint("generation.before_rename")
+        os.rename(stage, generation)
+        checkpoint("generation.after_rename")
+        flush_dir(root / "generations")
+        return selected, manifest
+    finally:
+        if lstat(stage) is not None:
+            # Only the unique directory created by this invocation is removed.
+            import shutil
+            shutil.rmtree(stage)
+
+
+def replace_selector(root, name, selected):
+    temporary = root / "staging" / (name + "." + next(tempfile._get_candidate_names()))
+    os.symlink(selected, temporary)
+    checkpoint(name + ".before_rename")
+    os.replace(temporary, root / name)
+    checkpoint(name + ".after_rename")
+    flush_dir(root)
+
+
+def transaction(root):
+    path = root / "transaction.json"
+    if lstat(path) is None:
+        return None
+    require_regular(path, 0o600)
+    try:
+        value = json.loads(path.read_text())
+    except Exception:
+        raise Denied()
+    exact(value, ("owner", "schema", "phase", "old", "new", "topology"))
+    deny(value["owner"] != OWNER or value["schema"] != VERSION or value["phase"] not in ("prepared", "committed", "provisioning"))
+    for selected in (value["old"], value["new"]):
+        deny(selected is not None and GEN_RE.fullmatch(selected) is None)
+    return value
+
+
+def cleanup_transaction(root):
+    checkpoint("cleanup.before")
+    os.unlink(root / "transaction.json")
+    flush_dir(root)
+    checkpoint("cleanup.after")
+
+
+def recover(home, root):
+    tx = transaction(root)
+    if tx is None:
         return
-    requested = requested_targets(dto)
-    for target in requested:
-        ancestors_safe(home, target)
+    current = selector(root / "current")
+    deny(current not in (tx["old"], tx["new"]))
+    _, manifest = generation_manifest(root, tx["new"])
+    if current == tx["new"]:
+        if tx["old"] is not None:
+            replace_selector(root, "previous", tx["old"])
+        validate_exposures(home, root, manifest["targets"], True)
+        for target in manifest["targets"]:
+            path = home / target
+            if lstat(path) is None:
+                safe_ancestors(home, target, True)
+                os.symlink(exposure_target(home, root, target), path)
+                checkpoint("exposure.after")
+        cleanup_transaction(root)
+    else:
+        # No payload commit happened. Only discard the proven intent.
+        cleanup_transaction(root)
+
+
+def path_precedence(home):
+    directories = os.environ.get("PATH", "").split(os.pathsep)
+    local = str(home / ".local/bin")
+    deny(local not in directories)
+    index = directories.index(local)
+    for directory in directories[:index]:
+        for name in NAMES:
+            deny(lstat(Path(directory) / name) is not None)
+
+
+def observe(home, root, manifest):
+    path_precedence(home)
+    output = []
+    for binary in manifest["binaries"]:
+        target = binary["target"]
+        visible = home / target
+        info = lstat(visible)
+        deny(info is None or not stat.S_ISLNK(info.st_mode) or os.readlink(visible) != exposure_target(home, root, target))
+        current = visible.parent
+        link = os.readlink(visible)
+        steps = 0
+        while True:
+            steps += 1
+            deny(steps > MAX_CHAIN or os.path.isabs(link))
+            candidate = Path(os.path.normpath(current / link))
+            info = lstat(candidate)
+            deny(info is None)
+            if stat.S_ISLNK(info.st_mode):
+                current = candidate.parent
+                link = os.readlink(candidate)
+                continue
+            deny(not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o755)
+            descriptor = os.open(candidate, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                after = os.fstat(descriptor)
+                deny(after.st_dev != info.st_dev or after.st_ino != info.st_ino or not stat.S_ISREG(after.st_mode))
+                data = b""
+                while True:
+                    chunk = os.read(descriptor, 1024 * 1024)
+                    if not chunk:
+                        break
+                    data += chunk
+                    deny(len(data) > MAX_BINARY)
+            finally:
+                os.close(descriptor)
+            checkpoint("proof.read")
+            digest = hashlib.sha256(data).hexdigest()
+            deny(digest != binary["sha256"])
+            output.append({"name": binary["name"], "target": target, "mode": "0755", "sha256": digest})
+            break
+    return {"pathPrecedence": "proven", "binaries": output}
+
+
+def preflight_locked(dto, home, root, rollback=False):
+    recover(home, root)
+    current = selector(root / "current")
+    if rollback:
+        previous = selector(root / "previous", True)
+        generation_manifest(root, previous)
+        deny(current is None)
+        return
+    entries = expand(dto)
+    targets = [entry[0] for entry in entries]
+    for _, kind, value, _ in entries:
+        if kind == "store":
+            deny(lstat(value) is None)
+    path_precedence(home)
+    if current is None:
+        validate_exposures(home, root, targets, True)
+    else:
+        _, manifest = generation_manifest(root, current)
+        deny(manifest["targets"] != targets)
+        validate_exposures(home, root, targets, False)
+    return entries
+
+
+def realize(dto, home, root):
+    entries = preflight_locked(dto, home, root)
+    selected, manifest = stage_generation(root, dto, entries)
+    old = selector(root / "current")
+    if old == selected:
+        return observe(home, root, manifest)
+    tx = {"owner": OWNER, "schema": VERSION, "phase": "prepared", "old": old, "new": selected, "topology": manifest["targets"]}
+    atomic_json(root / "transaction.json", tx, "transaction")
+    replace_selector(root, "current", selected)
+    tx["phase"] = "committed" if old is not None else "provisioning"
+    atomic_json(root / "transaction.json", tx, "transaction_commit")
+    if old is not None:
+        replace_selector(root, "previous", old)
+    for target in manifest["targets"]:
         path = home / target
-        deny((path.exists() or path.is_symlink()) and not owned(path, root))
-    for source in dto["nixHome"]["realization"]["packages"] + list(dto["nixHome"]["realization"]["files"].values()):
-        deny(not Path(source).exists())
-    path_dirs = os.environ.get("PATH", "").split(os.pathsep)
-    local_bin = str(home / ".local/bin")
-    deny(local_bin not in path_dirs)
-    local_index = path_dirs.index(local_bin)
-    for directory in path_dirs[:local_index]:
-        deny(any((Path(directory) / name).exists() for name in NAMES))
+        if lstat(path) is None:
+            safe_ancestors(home, target, True)
+            checkpoint("exposure.before")
+            os.symlink(exposure_target(home, root, target), path)
+            checkpoint("exposure.after")
+    validate_exposures(home, root, manifest["targets"], False)
+    cleanup_transaction(root)
+    return observe(home, root, manifest)
 
 
-def atomic_link(target, link):
-    link.parent.mkdir(parents=True, exist_ok=True)
-    temporary = link.with_name(link.name + ".nix-home-new")
-    temporary.unlink(missing_ok=True)
-    temporary.symlink_to(target)
-    os.replace(temporary, link)
-
-
-def publish_generation(home, generation):
-    root, current, previous = paths(home)
-    old = Path(os.path.realpath(current)) if current.is_symlink() else None
-    manifest = json.loads((generation / "manifest.json").read_text())
-    old_manifest = json.loads((old / "manifest.json").read_text()) if old else {"targets": []}
-    new_targets = manifest["targets"]
-    for target in new_targets:
-        source = generation / "home" / target
-        atomic_link(source, home / target)
-    for target in set(old_manifest["targets"]) - set(new_targets):
-        path = home / target
-        if owned(path, root):
-            path.unlink()
-    atomic_link(generation, current)
-    if old and old != generation:
-        atomic_link(old, previous)
-
-
-def realize(dto, home):
-    preflight(dto, home)
-    root, current, _ = paths(home)
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    canonical = json.dumps({k: v for k, v in dto.items() if k != "action"}, sort_keys=True,
-                           default=lambda _: None).encode()
-    # bytesBase64 is public but avoid retaining duplicate payload in metadata.
-    identity = hashlib.sha256(canonical).hexdigest()
-    generation = root / "generations" / identity
-    if not generation.exists():
-        stage = Path(tempfile.mkdtemp(prefix=".stage-", dir=root))
-        try:
-            target_root = stage / "home"
-            targets = requested_targets(dto)
-            for binary in dto["binaries"]:
-                destination = target_root / binary["target"]
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_bytes(binary["_bytes"])
-                destination.chmod(0o755)
-            for target, source in dto["nixHome"]["realization"]["files"].items():
-                destination = target_root / target
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.symlink_to(source)
-            for package in dto["nixHome"]["realization"]["packages"]:
-                package_bin = Path(package) / "bin"
-                if package_bin.is_dir():
-                    for executable in sorted(package_bin.iterdir()):
-                        destination = target_root / ".local/bin" / executable.name
-                        destination.parent.mkdir(parents=True, exist_ok=True)
-                        destination.symlink_to(executable)
-            (stage / "manifest.json").write_text(json.dumps({"targets": targets, "packages": dto["nixHome"]["realization"]["packages"]}))
-            generation.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(stage, generation)
-        finally:
-            shutil.rmtree(stage, ignore_errors=True)
-    publish_generation(home, generation)
-    for name in NAMES:
-        deny(shutil.which(name) != str(home / ".local/bin" / name))
-    return {"pathPrecedence": "proven", "binaries": [
-        {k: binary[k] for k in ("name", "target", "mode", "sha256")} for binary in dto["binaries"]]}
-
-
-def rollback(home):
-    preflight(None, home, True)
-    root, current, previous = paths(home)
-    prior = Path(os.path.realpath(previous))
-    now = Path(os.path.realpath(current))
-    publish_generation(home, prior)
-    atomic_link(now, previous)
+def rollback(home, root):
+    preflight_locked(None, home, root, True)
+    old = selector(root / "current", True)
+    new = selector(root / "previous", True)
+    _, manifest = generation_manifest(root, new)
+    tx = {"owner": OWNER, "schema": VERSION, "phase": "prepared", "old": old, "new": new, "topology": manifest["targets"]}
+    atomic_json(root / "transaction.json", tx, "transaction")
+    replace_selector(root, "current", new)
+    atomic_json(root / "transaction.json", dict(tx, phase="committed"), "transaction_commit")
+    replace_selector(root, "previous", old)
+    cleanup_transaction(root)
 
 
 def main():
     deny(len(sys.argv) < 2 or sys.argv[1] not in ("preflight", "realize", "rollback"))
     action = sys.argv[1]
     dto = read_request(action)
-    home = Path(os.environ["HOME"])
-    deny(not home.is_absolute())
-    if action == "preflight":
-        preflight(dto, home)
-    elif action == "realize":
-        print(json.dumps(realize(dto, home), separators=(",", ":")))
-    else:
-        rollback(home)
+    home = Path(os.environ.get("HOME", ""))
+    deny(not home.is_absolute() or lstat(home) is None or stat.S_ISLNK(os.lstat(home).st_mode))
+    root = initialize_root(home)
+    with (root / "lock").open("rb") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        checkpoint("lock.acquired")
+        if action == "preflight":
+            preflight_locked(dto, home, root)
+        elif action == "realize":
+            print(json.dumps(realize(dto, home, root), separators=(",", ":")))
+        else:
+            rollback(home, root)
 
 
 try:
