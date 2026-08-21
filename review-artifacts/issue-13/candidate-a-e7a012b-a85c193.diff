@@ -1,0 +1,3243 @@
+diff --git a/home/default.nix b/home/default.nix
+index c10fe6c..f94f63f 100644
+--- a/home/default.nix
++++ b/home/default.nix
+@@ -18,6 +18,12 @@ let
+       test "$(./nix-home-add-gcroot 2>&1 >/dev/null; echo $?)" = 1
+       test "$(./nix-home-add-gcroot x relative 2>&1 >/dev/null; echo $?)" = 1
+       test -z "$(./nix-home-add-gcroot 2>&1 || true)"
++      # Exercise the compiled supervisor itself without opening the Nix store.
++      ./nix-home-add-gcroot --supervisor-test success
++      ./nix-home-add-gcroot --supervisor-test parent-loss
++      ./nix-home-add-gcroot --supervisor-test timeout
++      ./nix-home-add-gcroot --supervisor-test signal
++      ./nix-home-add-gcroot --supervisor-test pending-signal
+     '';
+     installPhase = ''
+       install -Dm755 nix-home-add-gcroot $out/bin/nix-home-add-gcroot
+diff --git a/scripts/nix-home b/scripts/nix-home
+index 4ad92df..6f43017 100755
+--- a/scripts/nix-home
++++ b/scripts/nix-home
+@@ -2,16 +2,20 @@
+ """Karsa's fixed-topology, repository-owned Darwin home realizer."""
+ import base64
+ import binascii
++import ctypes
++import errno
+ import fcntl
+ import hashlib
+ import json
+ import os
+ import re
+-import subprocess
++import selectors
++import signal
+ import stat
++import subprocess
+ import sys
+ import tempfile
+-import signal
++import time
+ from pathlib import Path, PurePosixPath
+ 
+ MAX_INPUT = 384 * 1024 * 1024
+@@ -19,16 +23,32 @@ MAX_BINARY = 192 * 1024 * 1024
+ MAX_PACKAGES = 4096
+ MAX_FILES = 16384
+ MAX_TARGET = 1024
+-MAX_CHAIN = 16
+ NAMES = ("karsa", "karsa-composition")
+-TARGETS = tuple(".local/bin/" + n for n in NAMES)
++TARGETS = tuple(".local/bin/" + name for name in NAMES)
+ STORE_RE = re.compile(r"^/nix/store/[0-9a-df-np-sv-z]{32}-(?!\.{1,2}(?:-|$))[0-9A-Za-z+._?=-]{1,211}$")
+-GEN_RE = re.compile(r"generations/[0-9a-f]{64}")
++STORE_SOURCE_RE = re.compile(r"^(/nix/store/[0-9a-df-np-sv-z]{32}-(?!\.{1,2}(?:-|$))[0-9A-Za-z+._?=-]{1,211})(?:/(.+))?$")
++IDENTITY_RE = re.compile(r"[0-9a-f]{64}")
++GEN_RE = re.compile(r"generations/([0-9a-f]{64})")
++HELPER_TEMP_RE = re.compile(r"([0-9]+)\.tmp-([0-9]+)-([0-9]+)")
+ OWNER = "zainfathoni/nix-home:darwin-home-realizer"
+ VERSION = 1
+ PYTHON = "@PYTHON@"
+ GCROOT_HELPER = "@GCROOT_HELPER@"
+ HELPER_TIMEOUT = 5.0
++CHECKPOINTS = (
++    "bootstrap.lock", "bootstrap.owner_record", "bootstrap.directory", "bootstrap.root_owner",
++    "bootstrap.children", "bootstrap.before_rename", "bootstrap.after_rename", "lock.before_acquire",
++    "lock.acquired",
++    "stage.before", "stage.after", "gcroot_directory.before_rename", "gcroot_directory.after_rename",
++    "gcroot.before", "gcroot.after", "generation.before_flush", "generation.after_flush",
++    "generation.before_rename", "generation.after_rename", "transaction.flush", "transaction.rename",
++    "current.before_rename", "current.after_rename", "transaction_commit.flush",
++    "transaction_commit.rename", "previous.before_rename", "previous.after_rename",
++    "exposure.before", "exposure.after", "proof.read", "retention.before",
++    "retention.generation.rename", "retention.generation.delete", "retention.generation.after",
++    "retention.gcroot.rename", "retention.gcroot.delete", "retention.gcroot.after",
++    "retention.after", "cleanup.before", "cleanup.after",
++)
+ 
+ 
+ class Denied(Exception):
+@@ -45,60 +65,300 @@ def exact(value, keys):
+ 
+ 
+ def checkpoint(name):
+-    if os.environ.get("NIX_HOME_TESTING") == "1" and os.environ.get("NIX_HOME_FAULT") == name:
+-        os._exit(75)
++    deny(name not in CHECKPOINTS)
++    if os.environ.get("NIX_HOME_TESTING") == "1":
++        receipt = os.environ.get("NIX_HOME_CHECKPOINT_LOG")
++        if receipt:
++            descriptor = os.open(receipt, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
++            try:
++                os.write(descriptor, (name + "\n").encode())
++                os.fsync(descriptor)
++            finally:
++                os.close(descriptor)
++        if os.environ.get("NIX_HOME_FAULT") == name:
++            os._exit(75)
++
++
++def json_bytes(value):
++    return (json.dumps(value, separators=(",", ":"), sort_keys=True) + "\n").encode()
++
++
++def parse_json(data):
++    def pairs(items):
++        value = {}
++        for key, item in items:
++            deny(type(key) is not str or key in value)
++            value[key] = item
++        return value
++    try:
++        return json.loads(data, object_pairs_hook=pairs)
++    except Denied:
++        raise
++    except Exception:
++        raise Denied()
++
++
++def names(descriptor):
++    return sorted(os.listdir(descriptor))
++
++
++def info_at(parent, name):
++    try:
++        return os.stat(name, dir_fd=parent, follow_symlinks=False)
++    except FileNotFoundError:
++        return None
++
++
++def open_dir_at(parent, name):
++    return os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
++
++
++def require_directory_fd(descriptor, mode=None):
++    info = os.fstat(descriptor)
++    deny(not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid())
++    if mode is not None:
++        deny(stat.S_IMODE(info.st_mode) != mode)
++    return info
++
++
++def require_directory_at(parent, name, mode=0o700):
++    info = info_at(parent, name)
++    deny(info is None or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
++         or stat.S_IMODE(info.st_mode) != mode)
++    descriptor = open_dir_at(parent, name)
++    require_directory_fd(descriptor, mode)
++    return descriptor
++
++
++def require_regular_at(parent, name, mode=0o600, limit=MAX_INPUT):
++    descriptor = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
++    try:
++        info = os.fstat(descriptor)
++        deny(not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1
++             or stat.S_IMODE(info.st_mode) != mode or info.st_size < 0 or info.st_size > limit)
++        data = bytearray()
++        while True:
++            chunk = os.read(descriptor, min(1024 * 1024, limit + 1 - len(data)))
++            if not chunk:
++                break
++            data.extend(chunk)
++            deny(len(data) > limit)
++        deny(len(data) != info.st_size)
++        return bytes(data)
++    finally:
++        os.close(descriptor)
++
++
++def require_symlink_at(parent, name, expected=None):
++    info = info_at(parent, name)
++    deny(info is None or not stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid())
++    value = os.readlink(name, dir_fd=parent)
++    if expected is not None:
++        deny(value != expected)
++    return value
++
++
++def write_exclusive_at(parent, name, data, mode=0o600):
++    descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
++                         mode, dir_fd=parent)
++    try:
++        os.fchmod(descriptor, mode)
++        view = memoryview(data)
++        while view:
++            written = os.write(descriptor, view)
++            deny(written <= 0)
++            view = view[written:]
++        os.fsync(descriptor)
++    finally:
++        os.close(descriptor)
++    os.fsync(parent)
+ 
+ 
+-def flush_file(path):
+-    with path.open("rb") as stream:
+-        os.fsync(stream.fileno())
++def ensure_regular_at(parent, name, data, mode=0o600):
++    info = info_at(parent, name)
++    if info is None:
++        try:
++            write_exclusive_at(parent, name, data, mode)
++        except FileExistsError:
++            pass
++    deny(require_regular_at(parent, name, mode, len(data)) != data)
+ 
+ 
+-def flush_dir(path):
+-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW)
++def create_directory_at(parent, name, mode=0o700):
++    os.mkdir(name, mode, dir_fd=parent)
++    descriptor = open_dir_at(parent, name)
+     try:
++        os.fchmod(descriptor, mode)
+         os.fsync(descriptor)
+     finally:
+         os.close(descriptor)
++    os.fsync(parent)
++
++
++def rename_exclusive_at(source_parent, source, destination_parent, destination):
++    """Publish a directory without ever replacing an unvalidated winner."""
++    library = ctypes.CDLL(None, use_errno=True)
++    source_name = os.fsencode(source)
++    destination_name = os.fsencode(destination)
++    if sys.platform == "darwin":
++        operation = library.renameatx_np
++        operation.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
++                              ctypes.c_char_p, ctypes.c_uint)
++        result = operation(source_parent, source_name, destination_parent, destination_name, 0x00000004)
++    elif sys.platform.startswith("linux"):
++        operation = library.renameat2
++        operation.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
++                              ctypes.c_char_p, ctypes.c_uint)
++        result = operation(source_parent, source_name, destination_parent, destination_name, 1)
++    else:
++        raise Denied()
++    if result != 0:
++        error = ctypes.get_errno()
++        if error in (errno.EEXIST, errno.ENOTEMPTY):
++            raise FileExistsError(error, os.strerror(error), destination)
++        raise OSError(error, os.strerror(error), destination)
++
++
++def ensure_directory_at(parent, name, mode=0o700):
++    info = info_at(parent, name)
++    if info is None:
++        create_directory_at(parent, name, mode)
++    return require_directory_at(parent, name, mode)
++
++
++def absolute_parts(value):
++    deny(type(value) is not str or not value.startswith("/") or value == "/" or "\x00" in value)
++    deny(value.endswith("/") or os.path.normpath(value) != value)
++    parts = value[1:].split("/")
++    deny(any(not part or part in (".", "..") for part in parts))
++    return parts
++
++
++def open_absolute_directory(value):
++    descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
++    try:
++        for part in absolute_parts(value):
++            child = open_dir_at(descriptor, part)
++            os.close(descriptor)
++            descriptor = child
++        require_directory_fd(descriptor)
++        return descriptor
++    except Exception:
++        os.close(descriptor)
++        raise
++
++
++def verify_absolute_directory(value, expected):
++    observed = open_absolute_directory(value)
++    try:
++        left = os.fstat(expected)
++        right = os.fstat(observed)
++        deny((left.st_dev, left.st_ino) != (right.st_dev, right.st_ino))
++    finally:
++        os.close(observed)
++
++
++def open_existing_chain(parent, parts):
++    descriptor = os.dup(parent)
++    try:
++        for part in parts:
++            try:
++                child = open_dir_at(descriptor, part)
++            except FileNotFoundError:
++                os.close(descriptor)
++                return None
++            require_directory_fd(child)
++            os.close(descriptor)
++            descriptor = child
++        return descriptor
++    except Exception:
++        os.close(descriptor)
++        raise
++
++
++def ensure_chain(parent, parts):
++    descriptor = os.dup(parent)
++    try:
++        for part in parts:
++            info = info_at(descriptor, part)
++            if info is None:
++                try:
++                    create_directory_at(descriptor, part)
++                except FileExistsError:
++                    pass
++            child = open_dir_at(descriptor, part)
++            require_directory_fd(child)
++            os.close(descriptor)
++            descriptor = child
++        return descriptor
++    except Exception:
++        os.close(descriptor)
++        raise
+ 
+ 
+-def open_dir(path, dir_fd=None):
+-    return os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
++def open_parent(parent, target, create=False):
++    parts = relative(target).split("/")
++    descriptor = os.dup(parent)
++    try:
++        for part in parts[:-1]:
++            info = info_at(descriptor, part)
++            if info is None:
++                if not create:
++                    raise FileNotFoundError(part)
++                create_directory_at(descriptor, part)
++            child = open_dir_at(descriptor, part)
++            require_directory_fd(child)
++            os.close(descriptor)
++            descriptor = child
++        return descriptor, parts[-1]
++    except Exception:
++        os.close(descriptor)
++        raise
+ 
+ 
+-def flush_tree(path):
+-    """Flush every modified directory bottom-up, not merely the generation root."""
+-    directories = []
+-    for directory, children, _ in os.walk(path, topdown=True, followlinks=False):
+-        directories.append(Path(directory))
+-        # os.walk classifies symlinks to directories as children even when it will
+-        # not follow them. Do not try to open/fsync those links as directories.
+-        children[:] = [child for child in children
+-                       if not stat.S_ISLNK(os.lstat(Path(directory) / child).st_mode)]
+-    for directory in reversed(directories):
+-        flush_dir(directory)
++def remove_tree_at(parent, name):
++    descriptor = require_directory_at(parent, name)
++    try:
++        for child in names(descriptor):
++            info = info_at(descriptor, child)
++            deny(info is None)
++            if stat.S_ISDIR(info.st_mode):
++                remove_tree_at(descriptor, child)
++            else:
++                os.unlink(child, dir_fd=descriptor)
++                os.fsync(descriptor)
++    finally:
++        os.close(descriptor)
++    os.rmdir(name, dir_fd=parent)
++    os.fsync(parent)
+ 
+ 
+ def add_gcroot(store, destination):
+     """Invoke only the Nix-substituted non-realizing helper, with bounded private I/O."""
+-    process = subprocess.Popen([GCROOT_HELPER, store, str(destination)], stdin=subprocess.DEVNULL,
+-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+-                               env={"LANG": "C", "LC_ALL": "C", "PATH": ""},
+-                               close_fds=True)
++    watch_read, watch_write = os.pipe()
++    try:
++        process = subprocess.Popen([GCROOT_HELPER, store, str(destination), str(watch_read)],
++                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
++                                   stderr=subprocess.PIPE,
++                                   env={"LANG": "C", "LC_ALL": "C", "PATH": ""},
++                                   close_fds=True, pass_fds=(watch_read,))
++    except Exception:
++        os.close(watch_read)
++        os.close(watch_write)
++        raise
++    os.close(watch_read)
+     previous_handlers = {}
+     def interrupted(_signum, _frame):
+         raise Denied()
+     for signum in (signal.SIGINT, signal.SIGTERM):
+         previous_handlers[signum] = signal.signal(signum, interrupted)
+     try:
+-        # Drain incrementally; stop and deny as soon as either cap is exceeded.
+-        import selectors
+         selector = selectors.DefaultSelector()
+         selector.register(process.stdout, selectors.EVENT_READ, [bytearray(), 0])
+         selector.register(process.stderr, selectors.EVENT_READ, [bytearray(), 128])
+-        deadline = __import__("time").monotonic() + HELPER_TIMEOUT
++        deadline = time.monotonic() + HELPER_TIMEOUT
+         while selector.get_map():
+-            remaining = deadline - __import__("time").monotonic()
++            remaining = deadline - time.monotonic()
+             if remaining <= 0:
+                 raise subprocess.TimeoutExpired(process.args, HELPER_TIMEOUT)
+             for key, _ in selector.select(remaining):
+@@ -108,9 +368,7 @@ def add_gcroot(store, destination):
+                     continue
+                 key.data[0].extend(chunk)
+                 deny(len(key.data[0]) > key.data[1])
+-        process.wait(timeout=max(0.0, deadline - __import__("time").monotonic()))
+-        stdout = b""
+-        stderr = b""
++        process.wait(timeout=max(0.0, deadline - time.monotonic()))
+     except (subprocess.TimeoutExpired, KeyboardInterrupt, SystemExit, Denied):
+         try:
+             process.terminate()
+@@ -124,33 +382,14 @@ def add_gcroot(store, destination):
+     finally:
+         for signum, handler in previous_handlers.items():
+             signal.signal(signum, handler)
+-    deny(stdout or len(stderr) > 128 or process.returncode != 0)
+-
+-
+-def write_exclusive(path, data, mode=0o600):
+-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+-    try:
+-        os.fchmod(descriptor, mode)
+-        with os.fdopen(descriptor, "wb", closefd=False) as stream:
+-            stream.write(data)
+-            stream.flush()
+-            os.fsync(stream.fileno())
+-    finally:
+-        os.close(descriptor)
+-
+-
+-def atomic_json(path, value, point):
+-    temporary = path.parent / "staging" / (path.name + "." + next(tempfile._get_candidate_names()))
+-    write_exclusive(temporary, (json.dumps(value, separators=(",", ":"), sort_keys=True) + "\n").encode())
+-    checkpoint(point + ".flush")
+-    os.replace(temporary, path)
+-    checkpoint(point + ".rename")
+-    flush_dir(path.parent)
++        os.close(watch_write)
++    deny(process.returncode != 0)
+ 
+ 
+ def relative(value):
+-    deny(type(value) is not str or len(value.encode()) > MAX_TARGET or not value)
+-    deny(value.startswith("/") or "\\" in value or any(ord(character) < 32 or ord(character) == 127 for character in value))
++    deny(type(value) is not str or not value or len(value.encode()) > MAX_TARGET)
++    deny(value.startswith("/") or "\\" in value
++         or any(ord(character) < 32 or ord(character) == 127 for character in value))
+     parts = value.split("/")
+     deny(any(not part or part in (".", "..") or len(part.encode()) > 255 for part in parts))
+     return value
+@@ -161,20 +400,26 @@ def store_path(value):
+     return value
+ 
+ 
++def store_source(value):
++    deny(type(value) is not str or len(value.encode()) > 4096)
++    match = STORE_SOURCE_RE.fullmatch(value)
++    deny(match is None)
++    if match.group(2) is not None:
++        relative(match.group(2))
++    return match.group(1), match.group(2)
++
++
+ def read_request(action):
+     deny(sys.argv != [sys.argv[0], action, "--json-stdin"])
+     raw = sys.stdin.buffer.read(MAX_INPUT + 1)
+     deny(len(raw) > MAX_INPUT or not raw.endswith(b"\n"))
+-    try:
+-        value = json.loads(raw)
+-    except Exception:
+-        raise Denied()
++    value = parse_json(raw)
+     if action == "rollback":
+         exact(value, ("schema", "action"))
+-        deny(value != {"schema": 1, "action": "rollback"})
++        deny(type(value["schema"]) is not int or value != {"schema": 1, "action": "rollback"})
+         return value
+     exact(value, ("schema", "action", "binaries", "nixHome"))
+-    deny(value["schema"] != 1 or value["action"] != action)
++    deny(type(value["schema"]) is not int or value["schema"] != 1 or value["action"] != action)
+     exact(value["nixHome"], ("realization",))
+     realization = value["nixHome"]["realization"]
+     exact(realization, ("packages", "files"))
+@@ -186,12 +431,15 @@ def read_request(action):
+     for target, source in realization["files"].items():
+         relative(target)
+         store_path(source)
+-    deny(type(value["binaries"]) is not list or len(value["binaries"]) != 2)
++    deny(type(value["binaries"]) is not list or len(value["binaries"]) != len(NAMES))
+     for index, binary in enumerate(value["binaries"]):
+         exact(binary, ("name", "target", "mode", "sha256", "bytesBase64"))
+-        deny(binary["name"] != NAMES[index] or binary["target"] != TARGETS[index] or binary["mode"] != "0755")
+-        deny(type(binary["sha256"]) is not str or re.fullmatch(r"[0-9a-f]{64}", binary["sha256"]) is None)
+-        deny(type(binary["bytesBase64"]) is not str or len(binary["bytesBase64"]) > (MAX_BINARY * 4 // 3 + 4))
++        deny(binary["name"] != NAMES[index] or binary["target"] != TARGETS[index]
++             or binary["mode"] != "0755")
++        deny(type(binary["sha256"]) is not str
++             or re.fullmatch(r"[0-9a-f]{64}", binary["sha256"]) is None)
++        deny(type(binary["bytesBase64"]) is not str
++             or len(binary["bytesBase64"]) > (MAX_BINARY * 4 // 3 + 4))
+         try:
+             data = base64.b64decode(binary["bytesBase64"], validate=True)
+         except (ValueError, binascii.Error):
+@@ -201,143 +449,139 @@ def read_request(action):
+     return value
+ 
+ 
+-def lstat(path):
+-    try:
+-        return os.lstat(path)
+-    except FileNotFoundError:
+-        return None
++def root_marker():
++    return {"layout": "fixed-topology-selector-v1", "mode": "0700", "owner": OWNER,
++            "schema": VERSION, "uid": os.getuid()}
+ 
+ 
+-def require_regular(path, mode=None):
+-    info = lstat(path)
+-    deny(info is None or not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1)
+-    if mode is not None:
+-        deny(stat.S_IMODE(info.st_mode) != mode)
+-    return info
+-
+-
+-def require_dir(path, mode=0o700):
+-    info = lstat(path)
+-    deny(info is None or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != mode)
++def generation_marker(identity):
++    return {"identity": identity, "kind": "generation", "owner": OWNER, "schema": VERSION}
+ 
+ 
+-def safe_ancestors(home, target, create=False):
+-    descriptor = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+-    try:
+-        for part in PurePosixPath(target).parts[:-1]:
+-            try:
+-                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+-            except FileNotFoundError:
+-                deny(not create)
+-                try:
+-                    os.mkdir(part, 0o700, dir_fd=descriptor)
+-                    os.chmod(part, 0o700, dir_fd=descriptor, follow_symlinks=False)
+-                    os.fsync(descriptor)
+-                except FileExistsError:
+-                    # A concurrent bootstrap may win; prove what won below.
+-                    pass
+-                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+-            info = os.fstat(child)
+-            deny(info.st_uid != os.getuid())
+-            os.close(descriptor)
+-            descriptor = child
+-    finally:
+-        os.close(descriptor)
++def gcroot_marker(identity):
++    return {"identity": identity, "owner": OWNER, "schema": VERSION}
+ 
+ 
+-def inspect_destination(home, target):
+-    descriptor = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+-    try:
+-        parts = PurePosixPath(target).parts
+-        for part in parts[:-1]:
+-            try:
+-                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+-            except FileNotFoundError:
+-                return
+-            deny(os.fstat(child).st_uid != os.getuid())
+-            os.close(descriptor); descriptor = child
+-        try:
+-            os.stat(parts[-1], dir_fd=descriptor, follow_symlinks=False)
+-        except FileNotFoundError:
+-            return
+-        raise Denied()
+-    finally:
+-        os.close(descriptor)
++class Layout:
++    def __init__(self, home_path, home_fd, state_fd, root_fd):
++        self.home_path = home_path
++        self.root_path = home_path + "/.local/state/nix-home"
++        self.home = home_fd
++        self.state = state_fd
++        self.root = root_fd
++        self.generations = require_directory_at(root_fd, "generations")
++        self.staging = require_directory_at(root_fd, "staging")
++        self.gcroots = require_directory_at(root_fd, "gcroots")
+ 
++    def close(self):
++        for descriptor in (self.gcroots, self.staging, self.generations,
++                           self.root, self.state, self.home):
++            os.close(descriptor)
+ 
+-def root_paths(home):
+-    root = home / ".local/state/nix-home"
+-    return root, root / "current", root / "previous"
++    def verify_paths(self):
++        verify_absolute_directory(self.home_path, self.home)
++        verify_absolute_directory(self.root_path, self.root)
+ 
+ 
+-def marker_value():
+-    return {"owner": OWNER, "schema": VERSION, "uid": os.getuid(), "mode": "0700", "layout": "fixed-topology-selector-v1"}
++def bootstrap_marker():
++    return {"kind": "bootstrap", "owner": OWNER, "schema": VERSION, "uid": os.getuid()}
+ 
+ 
+-def initialize_root(home):
+-    root, _, _ = root_paths(home)
+-    safe_ancestors(home, ".local/state/nix-home", True)
+-    if lstat(root) is None:
+-        parent = root.parent
+-        stage = Path(tempfile.mkdtemp(prefix=".nix-home-bootstrap-", dir=parent))
+-        try:
+-            os.chmod(stage, 0o700)
+-            write_exclusive(stage / "owner.json", (json.dumps(marker_value(), separators=(",", ":"), sort_keys=True) + "\n").encode())
+-            for name in ("generations", "staging", "gcroots"):
+-                os.mkdir(stage / name, 0o700); os.chmod(stage / name, 0o700)
+-            write_exclusive(stage / "lock", b"", 0o600)
+-            flush_tree(stage)
++def validate_root_marker(root):
++    require_directory_fd(root, 0o700)
++    deny(require_regular_at(root, "owner.json", 0o600, 512) != json_bytes(root_marker()))
++    for child in ("generations", "staging", "gcroots"):
++        descriptor = require_directory_at(root, child)
++        os.close(descriptor)
++    lock = require_regular_at(root, "lock", 0o600, 0)
++    deny(lock != b"")
++
++
++def resume_bootstrap(state):
++    owner_name = ".nix-home-bootstrap-owner.json"
++    ensure_regular_at(state, owner_name, json_bytes(bootstrap_marker()))
++    checkpoint("bootstrap.owner_record")
++    candidate = ".nix-home-bootstrap"
++    if info_at(state, candidate) is None:
++        create_directory_at(state, candidate)
++    checkpoint("bootstrap.directory")
++    root = require_directory_at(state, candidate)
++    try:
++        ensure_regular_at(root, "owner.json", json_bytes(root_marker()))
++        checkpoint("bootstrap.root_owner")
++        for child in ("generations", "staging", "gcroots"):
++            descriptor = ensure_directory_at(root, child)
+             try:
+-                os.rename(stage, root)
+-                flush_dir(parent)
+-            except OSError:
+-                deny(lstat(root) is None)
++                deny(names(descriptor))
++            finally:
++                os.close(descriptor)
++        ensure_regular_at(root, "lock", b"", 0o600)
++        deny(set(names(root)) != {"owner.json", "generations", "staging", "gcroots", "lock"})
++        checkpoint("bootstrap.children")
++        os.fsync(root)
++    finally:
++        os.close(root)
++    checkpoint("bootstrap.before_rename")
++    rename_exclusive_at(state, candidate, state, "nix-home")
++    checkpoint("bootstrap.after_rename")
++    os.fsync(state)
++
++
++def initialize_root(home_path, home):
++    state = ensure_chain(home, (".local", "state"))
++    root = open_existing_chain(state, ("nix-home",))
++    if root is None:
++        bootstrap_lock_name = ".nix-home-bootstrap.lock"
++        ensure_regular_at(state, bootstrap_lock_name, b"", 0o600)
++        bootstrap_lock = os.open(bootstrap_lock_name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW,
++                                 dir_fd=state)
++        try:
++            validate_lock_entry(state, bootstrap_lock, bootstrap_lock_name)
++            fcntl.flock(bootstrap_lock, fcntl.LOCK_EX)
++            validate_lock_entry(state, bootstrap_lock, bootstrap_lock_name)
++            checkpoint("bootstrap.lock")
++            root = open_existing_chain(state, ("nix-home",))
++            if root is None:
++                resume_bootstrap(state)
++                root = require_directory_at(state, "nix-home")
++            else:
++                deny(info_at(state, ".nix-home-bootstrap") is not None)
+         finally:
+-            if lstat(stage) is not None:
+-                import shutil
+-                shutil.rmtree(stage)
+-    validate_root(root)
+-    # Reclaim only bootstrap candidates carrying our exact marker and shape.
+-    for candidate in root.parent.glob(".nix-home-bootstrap-*"):
++            os.close(bootstrap_lock)
++    validate_root_marker(root)
++    return state, root
++
++
++def validate_root(layout):
++    validate_root_marker(layout.root)
++    allowed = {"owner.json", "generations", "staging", "gcroots", "lock",
++               "current", "previous", "transaction.json"}
++    deny(set(names(layout.root)) - allowed)
++    for name in names(layout.staging):
++        if name in ("transaction.json", "current", "previous"):
++            continue
++        match = re.fullmatch(r"(generation|gcroot|retired-generation|retired-gcroot)-([0-9a-f]{64})", name)
++        deny(match is None)
++        descriptor = require_directory_at(layout.staging, name)
+         try:
+-            require_dir(candidate)
+-            require_regular(candidate / "owner.json", 0o600)
+-            deny(json.loads((candidate / "owner.json").read_text()) != marker_value())
+-            deny({entry.name for entry in os.scandir(candidate)} != {"owner.json", "generations", "staging", "gcroots", "lock"})
+-            for name in ("generations", "staging", "gcroots"):
+-                require_dir(candidate / name)
+-                deny(any(os.scandir(candidate / name)))
+-            import shutil
+-            shutil.rmtree(candidate)
+-            flush_dir(root.parent)
+-        except Denied:
+-            raise
+-    return root
+-
+-
+-def validate_root(root):
+-    require_dir(root)
+-    require_regular(root / "owner.json", 0o600)
+-    try:
+-        marker = json.loads((root / "owner.json").read_text())
+-    except Exception:
+-        raise Denied()
+-    deny(marker != marker_value())
+-    for name in ("generations", "staging", "gcroots"):
+-        require_dir(root / name)
+-    require_regular(root / "lock", 0o600)
+-    allowed = {"owner.json", "generations", "staging", "gcroots", "lock", "current", "previous", "transaction.json"}
+-    deny(any(entry.name not in allowed for entry in os.scandir(root)))
++            entries = names(descriptor)
++            if "owner.json" in entries:
++                marker = generation_marker(match.group(2)) if "generation" in match.group(1) else gcroot_marker(match.group(2))
++                deny(require_regular_at(descriptor, "owner.json", 0o600, 512) != json_bytes(marker))
++            else:
++                deny(not match.group(1).startswith("retired-") or entries)
++        finally:
++            os.close(descriptor)
+ 
+ 
+-def selector(path, required=False):
+-    info = lstat(path)
++def selector(layout, name, required=False):
++    info = info_at(layout.root, name)
+     if info is None and not required:
+         return None
+     deny(info is None or not stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid())
+-    target = os.readlink(path)
+-    deny(GEN_RE.fullmatch(target) is None)
+-    return target
++    value = os.readlink(name, dir_fd=layout.root)
++    deny(GEN_RE.fullmatch(value) is None)
++    return value
+ 
+ 
+ def topology_collision(targets):
+@@ -347,431 +591,1147 @@ def topology_collision(targets):
+         deny(right.startswith(left + "/"))
+ 
+ 
++def protected_topology(targets):
++    reserved = ".local/state/nix-home"
++    deny(any(target == reserved or target.startswith(reserved + "/")
++             or reserved.startswith(target + "/") for target in targets))
++
++
++def package_entries(package):
++    package_bin = Path(package) / "bin"
++    try:
++        info = os.lstat(package_bin)
++    except FileNotFoundError:
++        return []
++    deny(not stat.S_ISDIR(info.st_mode))
++    entries = []
++    for item in sorted(os.scandir(package_bin), key=lambda entry: entry.name):
++        deny("/" in item.name or item.name in ("", ".", ".."))
++        item_info = item.stat(follow_symlinks=False)
++        deny(not (stat.S_ISREG(item_info.st_mode) or stat.S_ISLNK(item_info.st_mode)))
++        target = relative(".local/bin/" + item.name)
++        entries.append([target, "store", package + "/bin/" + item.name])
++    return entries
++
++
+ def expand(dto):
+-    entries = [(target, "binary", binary["_bytes"], binary["sha256"]) for target, binary in zip(TARGETS, dto["binaries"])]
++    entries = [(target, "binary", binary["_bytes"], binary["sha256"])
++               for target, binary in zip(TARGETS, dto["binaries"])]
+     for target, source in dto["nixHome"]["realization"]["files"].items():
+         entries.append((target, "store", source, None))
+     for package in dto["nixHome"]["realization"]["packages"]:
+-        package_bin = Path(package) / "bin"
+-        info = lstat(package_bin)
+-        if info is None:
+-            continue
+-        deny(not stat.S_ISDIR(info.st_mode))
+-        for item in sorted(os.scandir(package_bin), key=lambda entry: entry.name):
+-            deny("/" in item.name or item.name in ("", ".", ".."))
+-            item_info = item.stat(follow_symlinks=False)
+-            deny(not (stat.S_ISREG(item_info.st_mode) or stat.S_ISLNK(item_info.st_mode)))
+-            entries.append((relative(".local/bin/" + item.name), "store", package + "/bin/" + item.name, None))
++        for target, kind, source in package_entries(package):
++            entries.append((target, kind, source, None))
+             deny(len(entries) > MAX_FILES + MAX_PACKAGES + len(NAMES))
+-    topology_collision([entry[0] for entry in entries])
+-    reserved = [".local/state/nix-home"]
+-    deny(any(a == b or a.startswith(b + "/") or b.startswith(a + "/") for a in [e[0] for e in entries] for b in reserved))
++    targets = [entry[0] for entry in entries]
++    topology_collision(targets)
++    protected_topology(targets)
+     return entries
+ 
+ 
+-def exposure_target(home, root, target):
+-    return os.path.relpath(root / "current/home" / target, (home / target).parent)
++def realization_document(dto, entries):
++    direct_roots = dto["nixHome"]["realization"]["packages"] + list(dto["nixHome"]["realization"]["files"].values())
++    store_roots = sorted(set(direct_roots))
++    canonical_entries = [[target, kind, value if kind == "store" else digest]
++                         for target, kind, value, digest in entries]
++    document = {
++        "binaries": [{"mode": "0755", "name": binary["name"], "sha256": binary["sha256"],
++                      "target": binary["target"]} for binary in dto["binaries"]],
++        "entries": canonical_entries,
++        "owner": OWNER,
++        "packages": dto["nixHome"]["realization"]["packages"],
++        "schema": VERSION,
++        "storeRoots": store_roots,
++        "targets": [entry[0] for entry in entries],
++    }
++    identity = hashlib.sha256(json_bytes(document)[:-1]).hexdigest()
++    return identity, dict(document, identity=identity)
+ 
+ 
+-def validate_exposures(home, root, targets, allow_missing):
++def validate_manifest_semantics(manifest, selected):
++    exact(manifest, ("owner", "schema", "identity", "targets", "storeRoots",
++                     "packages", "entries", "binaries"))
++    deny(type(manifest["schema"]) is not int or manifest["schema"] != VERSION
++         or manifest["owner"] != OWNER or type(manifest["identity"]) is not str
++         or selected != "generations/" + manifest["identity"])
++    identity = manifest["identity"]
++    deny(IDENTITY_RE.fullmatch(identity) is None)
++    binaries = manifest["binaries"]
++    deny(type(binaries) is not list or len(binaries) != len(NAMES))
++    for index, binary in enumerate(binaries):
++        exact(binary, ("name", "target", "mode", "sha256"))
++        deny(binary != {"mode": "0755", "name": NAMES[index], "sha256": binary["sha256"],
++                        "target": TARGETS[index]})
++        deny(type(binary["sha256"]) is not str or IDENTITY_RE.fullmatch(binary["sha256"]) is None)
++    packages = manifest["packages"]
++    deny(type(packages) is not list or len(packages) > MAX_PACKAGES
++         or len(packages) != len(set(packages)))
++    for package in packages:
++        store_path(package)
++    entries = manifest["entries"]
++    deny(type(entries) is not list or len(entries) < len(NAMES)
++         or len(entries) > MAX_FILES + MAX_PACKAGES + len(NAMES))
++    canonical_entries = []
++    direct_roots = []
++    derived = []
++    seen_derived = False
++    for index, entry in enumerate(entries):
++        deny(type(entry) is not list or len(entry) != 3)
++        target, kind, value = entry
++        relative(target)
++        deny(kind not in ("binary", "store"))
++        if index < len(NAMES):
++            deny(kind != "binary" or target != TARGETS[index] or value != binaries[index]["sha256"])
++        else:
++            deny(kind != "store")
++            root, suffix = store_source(value)
++            if suffix is None:
++                deny(seen_derived)
++                direct_roots.append(root)
++            else:
++                seen_derived = True
++                derived.append(entry)
++        canonical_entries.append([target, kind, value])
++    expected_derived = [entry for package in packages for entry in package_entries(package)]
++    deny(derived != expected_derived)
++    targets = manifest["targets"]
++    deny(type(targets) is not list or targets != [entry[0] for entry in canonical_entries])
+     for target in targets:
+-        safe_ancestors(home, target)
+-        path = home / target
+-        info = lstat(path)
+-        if info is None and allow_missing:
+-            continue
+-        deny(info is None or not stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid())
+-        deny(os.readlink(path) != exposure_target(home, root, target))
++        relative(target)
++    topology_collision(targets)
++    protected_topology(targets)
++    roots = manifest["storeRoots"]
++    deny(type(roots) is not list or roots != sorted(set(packages + direct_roots)))
++    for root in roots:
++        store_path(root)
++    canonical = {key: manifest[key] for key in ("binaries", "entries", "owner", "packages",
++                                                 "schema", "storeRoots", "targets")}
++    deny(identity != hashlib.sha256(json_bytes(canonical)[:-1]).hexdigest())
++    return canonical_entries
++
++
++def expected_tree(targets):
++    expected = {"."}
++    for target in targets:
++        parts = target.split("/")
++        expected.update("/".join(parts[:index]) for index in range(1, len(parts) + 1))
++    return expected
++
++
++def observed_tree(descriptor, prefix=""):
++    observed = {"."} if not prefix else set()
++    for name in names(descriptor):
++        path = name if not prefix else prefix + "/" + name
++        observed.add(path)
++        info = info_at(descriptor, name)
++        deny(info is None or info.st_uid != os.getuid())
++        if stat.S_ISDIR(info.st_mode):
++            child = require_directory_at(descriptor, name)
++            try:
++                observed.update(observed_tree(child, path))
++            finally:
++                os.close(child)
++    return observed
+ 
+ 
+-def generation_manifest(root, selected):
+-    deny(GEN_RE.fullmatch(selected) is None)
+-    generation = root / selected
+-    require_dir(generation)
+-    require_dir(generation / "home")
+-    require_regular(generation / "manifest.json", 0o600)
++def open_relative_directory(parent, value):
++    descriptor = os.dup(parent)
+     try:
+-        manifest = json.loads((generation / "manifest.json").read_text())
++        for part in value.split("/") if value else ():
++            child = open_dir_at(descriptor, part)
++            require_directory_fd(child, 0o700)
++            os.close(descriptor)
++            descriptor = child
++        return descriptor
+     except Exception:
+-        raise Denied()
+-    exact(manifest, ("owner", "schema", "identity", "targets", "storeRoots", "packages", "entries", "binaries"))
+-    deny(manifest["owner"] != OWNER or manifest["schema"] != VERSION or selected != "generations/" + manifest["identity"])
+-    deny(type(manifest["targets"]) is not list or any(relative(x) != x for x in manifest["targets"]))
+-    topology_collision(manifest["targets"])
+-    deny(type(manifest["storeRoots"]) is not list or type(manifest["packages"]) is not list or type(manifest["entries"]) is not list)
+-    canonical = {key: manifest[key] for key in ("owner", "schema", "targets", "storeRoots", "packages", "entries", "binaries")}
+-    deny(manifest["identity"] != hashlib.sha256(json.dumps(canonical, separators=(",", ":"), sort_keys=True).encode()).hexdigest())
+-    deny(manifest["targets"] != [entry[0] for entry in manifest["entries"]])
+-    expected = {"manifest.json", "home"}
+-    deny({entry.name for entry in os.scandir(generation)} != expected)
+-    expected_tree = {"."}
+-    for target in manifest["targets"]:
+-        parts = PurePosixPath(target).parts
+-        expected_tree.update(str(PurePosixPath(*parts[:index])) for index in range(1, len(parts) + 1))
+-    observed_tree = {"."}
+-    for directory, directories, files in os.walk(generation / "home", followlinks=False):
+-        relative_dir = Path(directory).relative_to(generation / "home")
+-        for name in directories + files:
+-            observed_tree.add(str(relative_dir / name) if str(relative_dir) != "." else name)
+-    deny(observed_tree != expected_tree)
+-    for target, kind, value in manifest["entries"]:
+-        relative(target); deny(kind not in ("binary", "store"))
+-        path = generation / "home" / target
+-        info = lstat(path)
+-        if kind == "binary":
+-            deny(info is None or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o755)
+-            with open(path, "rb") as stream: deny(hashlib.sha256(stream.read(MAX_BINARY + 1)).hexdigest() != value)
+-        else:
+-            deny(info is None or not stat.S_ISLNK(info.st_mode) or os.readlink(path) != value)
+-    validate_gcroots(root, manifest)
+-    return generation, manifest
+-
+-
+-def validate_gcroots(root, manifest):
+-    directory = root / "gcroots" / manifest["identity"]
+-    require_dir(directory)
+-    entries = sorted(os.scandir(directory), key=lambda item: item.name)
+-    deny([item.name for item in entries] != sorted(["owner.json"] +
+-         [name for i in range(len(manifest["storeRoots"])) for name in (str(i), str(i) + ".json")]))
+-    require_regular(directory / "owner.json", 0o600)
++        os.close(descriptor)
++        raise
++
++
++def observe_binary_at(parent, leaf):
++    descriptor = os.open(leaf, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
+     try:
+-        marker = json.loads((directory / "owner.json").read_text())
+-    except Exception:
+-        raise Denied()
+-    deny(marker != {"identity": manifest["identity"], "owner": OWNER, "schema": VERSION})
+-    by_name = {item.name: item for item in entries}
+-    for index, store in enumerate(manifest["storeRoots"]):
+-        require_regular(directory / (str(index) + ".json"), 0o600)
+-        deny((directory / (str(index) + ".json")).read_bytes() !=
+-             (json.dumps({"index": index, "storePath": store}, separators=(",", ":"), sort_keys=True) + "\n").encode())
+-        item = by_name[str(index)]
+-        info = item.stat(follow_symlinks=False)
+-        deny(not stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or os.readlink(item.path) != store)
+-
+-
+-def prepare_gcroots(root, identity, stores):
+-    directory = root / "gcroots" / identity
+-    marker = {"identity": identity, "owner": OWNER, "schema": VERSION}
+-    if lstat(directory) is None:
+-        os.mkdir(directory, 0o700); os.chmod(directory, 0o700)
+-        write_exclusive(directory / "owner.json", (json.dumps(marker, separators=(",", ":"), sort_keys=True) + "\n").encode())
++        info = os.fstat(descriptor)
++        deny(not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1
++             or info.st_size < 0 or info.st_size > MAX_BINARY)
++        sha = hashlib.sha256()
++        length = 0
++        while True:
++            chunk = os.read(descriptor, 1024 * 1024)
++            if not chunk:
++                break
++            length += len(chunk)
++            deny(length > MAX_BINARY)
++            sha.update(chunk)
++        deny(length != info.st_size)
++        return f"{stat.S_IMODE(info.st_mode):04o}", sha.hexdigest()
++    finally:
++        os.close(descriptor)
++
++
++def validate_binary_at(home, target, digest):
++    parent, leaf = open_parent(home, target)
++    try:
++        mode, observed_digest = observe_binary_at(parent, leaf)
++        deny(mode != "0755" or observed_digest != digest)
++    finally:
++        os.close(parent)
++
++
++def validate_gcroot_directory(layout, identity, stores, allow_partial=False):
++    directory = require_directory_at(layout.gcroots, identity)
++    try:
++        deny(require_regular_at(directory, "owner.json", 0o600, 512) != json_bytes(gcroot_marker(identity)))
++        expected = {"owner.json"}
+         for index, store in enumerate(stores):
+-            write_exclusive(directory / (str(index) + ".json"),
+-                            (json.dumps({"index": index, "storePath": store}, separators=(",", ":"), sort_keys=True) + "\n").encode())
+-        flush_dir(directory); flush_dir(root / "gcroots")
+-    else:
+-        require_dir(directory)
+-        require_regular(directory / "owner.json", 0o600)
++            marker_name = str(index) + ".json"
++            link_name = str(index)
++            marker = json_bytes({"index": index, "storePath": store})
++            expected.update((marker_name, link_name))
++            marker_info = info_at(directory, marker_name)
++            link_info = info_at(directory, link_name)
++            if allow_partial:
++                if marker_info is not None:
++                    deny(require_regular_at(directory, marker_name, 0o600, 4608) != marker)
++                if link_info is not None:
++                    require_symlink_at(directory, link_name, store)
++            else:
++                deny(marker_info is None or link_info is None)
++                deny(require_regular_at(directory, marker_name, 0o600, 4608) != marker)
++                require_symlink_at(directory, link_name, store)
++        for name in names(directory):
++            if name in expected:
++                continue
++            match = HELPER_TEMP_RE.fullmatch(name)
++            deny(not allow_partial or match is None)
++            index = int(match.group(1))
++            deny(index >= len(stores))
++            require_symlink_at(directory, name, stores[index])
++    finally:
++        os.close(directory)
++
++
++def generation_manifest(layout, selected, validate_roots=True):
++    match = GEN_RE.fullmatch(selected)
++    deny(match is None)
++    identity = match.group(1)
++    generation = require_directory_at(layout.generations, identity)
++    try:
++        deny(set(names(generation)) != {"owner.json", "manifest.json", "home"})
++        deny(require_regular_at(generation, "owner.json", 0o600, 512)
++             != json_bytes(generation_marker(identity)))
++        manifest_data = require_regular_at(generation, "manifest.json", 0o600, MAX_INPUT)
++        manifest = parse_json(manifest_data)
++        deny(manifest_data != json_bytes(manifest))
++        entries = validate_manifest_semantics(manifest, selected)
++        home = require_directory_at(generation, "home")
+         try:
+-            deny(json.loads((directory / "owner.json").read_text()) != marker)
+-        except Exception:
+-            raise Denied()
+-        expected = {"owner.json"} | {name for i in range(len(stores)) for name in (str(i), str(i) + ".json")}
+-        deny(any(item.name not in expected and
+-                 re.fullmatch(r"[0-9]+\.tmp-[0-9]+-[0-9]+", item.name) is None
+-                 for item in os.scandir(directory)))
++            deny(observed_tree(home) != expected_tree(manifest["targets"]))
++            for target, kind, value in entries:
++                if kind == "binary":
++                    validate_binary_at(home, target, value)
++                else:
++                    parent, leaf = open_parent(home, target)
++                    try:
++                        require_symlink_at(parent, leaf, value)
++                    finally:
++                        os.close(parent)
++        finally:
++            os.close(home)
++    finally:
++        os.close(generation)
++    if validate_roots:
++        validate_gcroot_directory(layout, identity, manifest["storeRoots"])
++    return manifest
++
++
++def validate_partial_generation(layout, identity, manifest, entries):
++    stage_name = "generation-" + identity
++    stage = require_directory_at(layout.staging, stage_name)
++    try:
++        deny(require_regular_at(stage, "owner.json", 0o600, 512)
++             != json_bytes(generation_marker(identity)))
++        deny(set(names(stage)) - {"owner.json", "manifest.json", "home"})
++        home_info = info_at(stage, "home")
++        if home_info is not None:
++            home = require_directory_at(stage, "home")
++            try:
++                observed = observed_tree(home)
++                deny(not observed.issubset(expected_tree(manifest["targets"])))
++                for target, kind, value, digest in entries:
++                    try:
++                        parent, leaf = open_parent(home, target)
++                    except FileNotFoundError:
++                        continue
++                    try:
++                        if info_at(parent, leaf) is None:
++                            continue
++                        if kind == "binary":
++                            validate_binary_at(home, target, digest)
++                        else:
++                            require_symlink_at(parent, leaf, value)
++                    finally:
++                        os.close(parent)
++            finally:
++                os.close(home)
++        manifest_info = info_at(stage, "manifest.json")
++        if manifest_info is not None:
++            deny(require_regular_at(stage, "manifest.json", 0o600, MAX_INPUT) != json_bytes(manifest))
++    finally:
++        os.close(stage)
++
++
++def create_staging_directory(layout, name, marker):
++    info = info_at(layout.staging, name)
++    if info is None:
++        create_directory_at(layout.staging, name)
++        descriptor = require_directory_at(layout.staging, name)
++        try:
++            write_exclusive_at(descriptor, "owner.json", json_bytes(marker))
++        finally:
++            os.close(descriptor)
++
++
++def initialize_gcroot_directory(layout, identity):
++    if info_at(layout.gcroots, identity) is not None:
++        return
++    stage_name = "gcroot-" + identity
++    create_staging_directory(layout, stage_name, gcroot_marker(identity))
++    stage = require_directory_at(layout.staging, stage_name)
++    try:
++        deny(set(names(stage)) != {"owner.json"})
++        deny(require_regular_at(stage, "owner.json", 0o600, 512) != json_bytes(gcroot_marker(identity)))
++    finally:
++        os.close(stage)
++    checkpoint("gcroot_directory.before_rename")
++    rename_exclusive_at(layout.staging, stage_name, layout.gcroots, identity)
++    checkpoint("gcroot_directory.after_rename")
++    os.fsync(layout.staging)
++    os.fsync(layout.gcroots)
++
++
++def prepare_gcroots(layout, identity, stores):
++    initialize_gcroot_directory(layout, identity)
++    validate_gcroot_directory(layout, identity, stores, True)
++    directory = require_directory_at(layout.gcroots, identity)
++    try:
++        for index, store in enumerate(stores):
++            ensure_regular_at(directory, str(index) + ".json",
++                              json_bytes({"index": index, "storePath": store}))
+         for index, store in enumerate(stores):
+-            require_regular(directory / (str(index) + ".json"), 0o600)
+-            deny((directory / (str(index) + ".json")).read_bytes() !=
+-                 (json.dumps({"index": index, "storePath": store}, separators=(",", ":"), sort_keys=True) + "\n").encode())
+-    for index, store in enumerate(stores):
+-        destination = directory / str(index)
+-        if lstat(destination) is not None:
+-            info = lstat(destination)
+-            deny(not stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid() or os.readlink(destination) != store)
+-        checkpoint("gcroot.before")
+-        add_gcroot(store, destination)
+-        checkpoint("gcroot.after")
+-        info = lstat(destination)
+-        deny(info is None or not stat.S_ISLNK(info.st_mode) or os.readlink(destination) != store)
+-    flush_dir(directory); flush_dir(root / "gcroots")
+-
+-
+-def identity_for(dto, entries):
+-    return realization_document(dto, entries)[0]
++            link_name = str(index)
++            if info_at(directory, link_name) is not None:
++                require_symlink_at(directory, link_name, store)
++            layout.verify_paths()
++            checkpoint("gcroot.before")
++            add_gcroot(store, layout.root_path + "/gcroots/" + identity + "/" + link_name)
++            checkpoint("gcroot.after")
++            layout.verify_paths()
++            require_symlink_at(directory, link_name, store)
++            os.fsync(directory)
++    finally:
++        os.close(directory)
++    os.fsync(layout.gcroots)
++    validate_gcroot_directory(layout, identity, stores)
+ 
+ 
+-def realization_document(dto, entries):
+-    store_roots = sorted(set(dto["nixHome"]["realization"]["packages"] + list(dto["nixHome"]["realization"]["files"].values())))
+-    canonical_entries = [[target, kind, value if kind == "store" else digest] for target, kind, value, digest in entries]
+-    document = {"owner": OWNER, "schema": VERSION, "targets": [e[0] for e in entries],
+-                "storeRoots": store_roots, "packages": dto["nixHome"]["realization"]["packages"],
+-                "entries": canonical_entries,
+-                "binaries": [{"name": b["name"], "target": b["target"], "mode": "0755", "sha256": b["sha256"]} for b in dto["binaries"]]}
+-    identity = hashlib.sha256(json.dumps(document, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+-    return identity, dict(document, identity=identity)
++def ensure_generation_parents(home, target):
++    parent, leaf = open_parent(home, target, True)
++    return parent, leaf
+ 
+ 
+-def stage_generation(root, dto, entries):
+-    identity, expected_manifest = realization_document(dto, entries)
++def flush_tree_fd(descriptor):
++    for name in names(descriptor):
++        info = info_at(descriptor, name)
++        if info is not None and stat.S_ISDIR(info.st_mode):
++            child = require_directory_at(descriptor, name)
++            try:
++                flush_tree_fd(child)
++            finally:
++                os.close(child)
++    os.fsync(descriptor)
++
++
++def stage_generation(layout, dto, entries):
++    identity, manifest = realization_document(dto, entries)
+     selected = "generations/" + identity
+-    generation = root / selected
+-    if lstat(generation) is not None:
+-        _, manifest = generation_manifest(root, selected)
+-        deny(manifest != expected_manifest)
++    if info_at(layout.generations, identity) is not None:
++        observed = generation_manifest(layout, selected, False)
++        deny(observed != manifest)
++        prepare_gcroots(layout, identity, manifest["storeRoots"])
++        deny(generation_manifest(layout, selected) != manifest)
+         return selected, manifest
+-    stage = Path(tempfile.mkdtemp(prefix="stage-", dir=root / "staging"))
+-    os.chmod(stage, 0o700)
++    stage_name = "generation-" + identity
++    create_staging_directory(layout, stage_name, generation_marker(identity))
++    validate_partial_generation(layout, identity, manifest, entries)
++    stage = require_directory_at(layout.staging, stage_name)
+     try:
+-        write_exclusive(stage / ".owner.json", (json.dumps({"owner": OWNER, "schema": VERSION, "identity": identity}, separators=(",", ":"), sort_keys=True) + "\n").encode())
+-        os.mkdir(stage / "home", 0o700)
+-        for index, (target, kind, value, digest) in enumerate(entries):
+-            checkpoint("stage.before")
+-            destination = stage / "home" / target
+-            destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+-            if kind == "binary":
+-                write_exclusive(destination, value, 0o755)
+-            else:
+-                os.symlink(value, destination)
+-            checkpoint("stage.after")
+-        manifest = expected_manifest
+-        write_exclusive(stage / "manifest.json", (json.dumps(manifest, separators=(",", ":"), sort_keys=True) + "\n").encode())
++        home = ensure_directory_at(stage, "home")
++        try:
++            for target, kind, value, digest in entries:
++                checkpoint("stage.before")
++                parent, leaf = ensure_generation_parents(home, target)
++                try:
++                    if info_at(parent, leaf) is None:
++                        if kind == "binary":
++                            write_exclusive_at(parent, leaf, value, 0o755)
++                        else:
++                            os.symlink(value, leaf, dir_fd=parent)
++                            os.fsync(parent)
++                    elif kind == "binary":
++                        validate_binary_at(home, target, digest)
++                    else:
++                        require_symlink_at(parent, leaf, value)
++                finally:
++                    os.close(parent)
++                checkpoint("stage.after")
++        finally:
++            os.close(home)
++        ensure_regular_at(stage, "manifest.json", json_bytes(manifest))
+         checkpoint("generation.before_flush")
+-        flush_tree(stage)
++        flush_tree_fd(stage)
+         checkpoint("generation.after_flush")
+-        prepare_gcroots(root, identity, manifest["storeRoots"])
+-        os.unlink(stage / ".owner.json")
+-        flush_dir(stage)
+-        checkpoint("generation.before_rename")
+-        os.rename(stage, generation)
+-        checkpoint("generation.after_rename")
+-        flush_dir(root / "generations")
+-        return selected, manifest
+     finally:
+-        if lstat(stage) is not None:
+-            # Only the unique directory created by this invocation is removed.
+-            import shutil
+-            shutil.rmtree(stage)
++        os.close(stage)
++    prepare_gcroots(layout, identity, manifest["storeRoots"])
++    validate_partial_generation(layout, identity, manifest, entries)
++    checkpoint("generation.before_rename")
++    rename_exclusive_at(layout.staging, stage_name, layout.generations, identity)
++    checkpoint("generation.after_rename")
++    os.fsync(layout.staging)
++    os.fsync(layout.generations)
++    deny(generation_manifest(layout, selected) != manifest)
++    return selected, manifest
++
++
++def staged_regular(layout, name):
++    info = info_at(layout.staging, name)
++    if info is None:
++        return None
++    return require_regular_at(layout.staging, name, 0o600, MAX_INPUT)
+ 
+ 
+-def replace_selector(root, name, selected):
+-    temporary = root / "staging" / (name + "." + next(tempfile._get_candidate_names()))
+-    os.symlink(selected, temporary)
++def atomic_root_json(layout, name, value, point):
++    data = json_bytes(value)
++    staged = staged_regular(layout, name)
++    if staged is None:
++        write_exclusive_at(layout.staging, name, data)
++    else:
++        deny(staged != data)
++    checkpoint(point + ".flush")
++    os.replace(name, name, src_dir_fd=layout.staging, dst_dir_fd=layout.root)
++    checkpoint(point + ".rename")
++    os.fsync(layout.staging)
++    os.fsync(layout.root)
++
++
++def replace_selector(layout, name, selected):
++    info = info_at(layout.staging, name)
++    if info is None:
++        os.symlink(selected, name, dir_fd=layout.staging)
++        os.fsync(layout.staging)
++    else:
++        require_symlink_at(layout.staging, name, selected)
+     checkpoint(name + ".before_rename")
+-    os.replace(temporary, root / name)
++    os.replace(name, name, src_dir_fd=layout.staging, dst_dir_fd=layout.root)
+     checkpoint(name + ".after_rename")
+-    flush_dir(root)
++    os.fsync(layout.staging)
++    os.fsync(layout.root)
+ 
+ 
+-def transaction(root):
+-    path = root / "transaction.json"
+-    if lstat(path) is None:
+-        return None
+-    require_regular(path, 0o600)
+-    try:
+-        value = json.loads(path.read_text())
+-    except Exception:
+-        raise Denied()
+-    exact(value, ("owner", "schema", "phase", "old", "new", "priorPrevious", "topology"))
+-    deny(value["owner"] != OWNER or value["schema"] != VERSION or value["phase"] not in ("prepared", "committed"))
++def transaction_shape(value):
++    exact(value, ("owner", "schema", "operation", "phase", "old", "new",
++                  "priorPrevious", "identity", "topology", "retire"))
++    deny(value["owner"] != OWNER or type(value["schema"]) is not int or value["schema"] != VERSION
++         or value["operation"] not in ("first", "update", "rollback")
++         or value["phase"] not in ("prepared", "committed"))
+     for selected in (value["old"], value["new"], value["priorPrevious"]):
+-        deny(selected is not None and GEN_RE.fullmatch(selected) is None)
++        deny(selected is not None and (type(selected) is not str or GEN_RE.fullmatch(selected) is None))
++    deny(type(value["identity"]) is not str or IDENTITY_RE.fullmatch(value["identity"]) is None
++         or value["new"] != "generations/" + value["identity"])
++    deny(type(value["topology"]) is not list)
++    for target in value["topology"]:
++        relative(target)
++    topology_collision(value["topology"])
++    retire = value["retire"]
++    deny(type(retire) is not list)
++    identities = []
++    for item in retire:
++        exact(item, ("identity", "storeRoots"))
++        deny(type(item["identity"]) is not str or IDENTITY_RE.fullmatch(item["identity"]) is None)
++        deny(type(item["storeRoots"]) is not list or item["storeRoots"] != sorted(set(item["storeRoots"])))
++        for store in item["storeRoots"]:
++            store_path(store)
++        identities.append(item["identity"])
++    deny(identities != sorted(set(identities)))
+     return value
+ 
+ 
+-def validate_state(root):
+-    current = selector(root / "current")
+-    previous = selector(root / "previous")
+-    tx = transaction(root)
++def read_transaction_at(parent, name):
++    info = info_at(parent, name)
++    if info is None:
++        return None
++    data = require_regular_at(parent, name, 0o600, MAX_INPUT)
++    value = parse_json(data)
++    deny(data != json_bytes(value))
++    return transaction_shape(value)
++
++
++def transaction(layout):
++    return read_transaction_at(layout.root, "transaction.json")
++
++
++def identity_sets(layout):
++    generations = set(names(layout.generations))
++    roots = set(names(layout.gcroots))
++    deny(any(IDENTITY_RE.fullmatch(value) is None for value in generations | roots))
++    return generations, roots
++
++
++def tombstone_name(kind, identity):
++    return "retired-" + kind + "-" + identity
++
++
++def tombstone_exists(layout, kind, identity):
++    return info_at(layout.staging, tombstone_name(kind, identity)) is not None
++
++
++def validate_tombstone(layout, kind, record, topology):
++    identity = record["identity"]
++    name = tombstone_name(kind, identity)
++    directory = require_directory_at(layout.staging, name)
++    try:
++        entries = set(names(directory))
++        marker = generation_marker(identity) if kind == "generation" else gcroot_marker(identity)
++        if "owner.json" not in entries:
++            deny(entries)
++            return
++        deny(require_regular_at(directory, "owner.json", 0o600, 512) != json_bytes(marker))
++        if kind == "generation":
++            deny(entries - {"owner.json", "manifest.json", "home"})
++            if "manifest.json" in entries:
++                data = require_regular_at(directory, "manifest.json", 0o600, MAX_INPUT)
++                manifest = parse_json(data)
++                deny(data != json_bytes(manifest))
++                validate_manifest_semantics(manifest, "generations/" + identity)
++                deny(manifest["storeRoots"] != record["storeRoots"] or manifest["targets"] != topology)
++            if "home" in entries:
++                home = require_directory_at(directory, "home")
++                try:
++                    deny(not observed_tree(home).issubset(expected_tree(topology)))
++                finally:
++                    os.close(home)
++        else:
++            expected = {"owner.json"}
++            for index, store in enumerate(record["storeRoots"]):
++                marker_name = str(index) + ".json"
++                link_name = str(index)
++                expected.update((marker_name, link_name))
++                if marker_name in entries:
++                    deny(require_regular_at(directory, marker_name, 0o600, 4608)
++                         != json_bytes({"index": index, "storePath": store}))
++                if link_name in entries:
++                    require_symlink_at(directory, link_name, store)
++            deny(entries - expected)
++    finally:
++        os.close(directory)
++
++
++def clear_directory_contents(parent, name, point):
++    directory = require_directory_at(parent, name)
++    try:
++        for child in [entry for entry in names(directory) if entry != "owner.json"]:
++            info = info_at(directory, child)
++            deny(info is None)
++            if stat.S_ISDIR(info.st_mode):
++                clear_directory_contents(directory, child, point)
++                os.rmdir(child, dir_fd=directory)
++            else:
++                os.unlink(child, dir_fd=directory)
++            os.fsync(directory)
++            checkpoint(point + ".delete")
++        if info_at(directory, "owner.json") is not None:
++            os.unlink("owner.json", dir_fd=directory)
++            os.fsync(directory)
++            checkpoint(point + ".delete")
++    finally:
++        os.close(directory)
++
++
++def remove_tombstone(layout, kind, record, topology, point):
++    name = tombstone_name(kind, record["identity"])
++    validate_tombstone(layout, kind, record, topology)
++    clear_directory_contents(layout.staging, name, point)
++    os.rmdir(name, dir_fd=layout.staging)
++    os.fsync(layout.staging)
++    checkpoint(point + ".delete")
++
++
++def validate_retired_state(layout, record, topology, retention_started):
++    identity = record["identity"]
++    generation_exists = info_at(layout.generations, identity) is not None
++    root_exists = info_at(layout.gcroots, identity) is not None
++    generation_tombstone = tombstone_exists(layout, "generation", identity)
++    root_tombstone = tombstone_exists(layout, "gcroot", identity)
++    deny(generation_exists and generation_tombstone or root_exists and root_tombstone)
++    if not retention_started:
++        deny(not generation_exists or not root_exists or generation_tombstone or root_tombstone)
++    else:
++        deny(generation_exists and not root_exists)
++        deny(generation_tombstone and (not root_exists or root_tombstone))
++        deny(root_tombstone and (generation_exists or generation_tombstone or root_exists))
++    if generation_exists:
++        manifest = generation_manifest(layout, "generations/" + identity)
++        deny(manifest["storeRoots"] != record["storeRoots"] or manifest["targets"] != topology)
++    elif root_exists:
++        validate_gcroot_directory(layout, identity, record["storeRoots"])
++    if generation_tombstone:
++        validate_tombstone(layout, "generation", record, topology)
++    if root_tombstone:
++        validate_tombstone(layout, "gcroot", record, topology)
++
++
++def validate_staged_transaction(layout, tx):
++    staged = read_transaction_at(layout.staging, "transaction.json")
++    if staged is not None and tx is not None:
++        allowed = [tx]
++        if tx["phase"] == "prepared":
++            allowed.append(dict(tx, phase="committed"))
++        deny(staged not in allowed)
++    for name, expected in (("current", tx["new"] if tx else None),
++                           ("previous", tx["old"] if tx and tx["old"] else None)):
++        if info_at(layout.staging, name) is not None:
++            deny(expected is None)
++            require_symlink_at(layout.staging, name, expected)
++
++
++def legal_transaction_tuples(operation, old, new, prior):
++    deny(new is None or old == new)
++    if operation == "first":
++        deny(old is not None or prior is not None)
++        return {("prepared", None, None), ("prepared", new, None),
++                ("committed", new, None)}
++    if operation == "update":
++        deny(old is None or prior == old)
++        return {("prepared", old, prior), ("prepared", new, prior),
++                ("committed", new, prior), ("committed", new, old)}
++    deny(operation != "rollback" or old is None or prior != new)
++    return {("prepared", old, new), ("prepared", new, new),
++            ("committed", new, new), ("committed", new, old)}
++
++
++def validate_transaction_contract(layout, tx, current, previous, staged_only=False):
++    retention_started = (tx["phase"] == "committed" and current == tx["new"]
++                         and previous == tx["old"])
++    new_manifest = generation_manifest(layout, tx["new"])
++    old_manifest = generation_manifest(layout, tx["old"]) if tx["old"] else None
++    retire_ids = {item["identity"] for item in tx["retire"]}
++    prior_manifest = None
++    if tx["priorPrevious"]:
++        prior_identity = tx["priorPrevious"].split("/")[1]
++        if info_at(layout.generations, prior_identity) is not None:
++            prior_manifest = generation_manifest(layout, tx["priorPrevious"])
++        else:
++            deny(prior_identity not in retire_ids or not retention_started)
++    deny(new_manifest["identity"] != tx["identity"] or new_manifest["targets"] != tx["topology"])
++    for manifest in (old_manifest, prior_manifest):
++        deny(manifest is not None and manifest["targets"] != tx["topology"])
++    old, new, prior = tx["old"], tx["new"], tx["priorPrevious"]
++    allowed = legal_transaction_tuples(tx["operation"], old, new, prior)
++    deny((tx["phase"], current, previous) not in allowed)
++    if staged_only:
++        deny(tx["phase"] != "prepared" or current != old or previous != prior)
++    referenced = {value.split("/")[1] for value in (old, new, prior) if value}
++    live = {value.split("/")[1] for value in (old, new) if value}
++    deny(retire_ids & live)
++    generations, roots = identity_sets(layout)
++    deny((generations | roots) - referenced - retire_ids)
++    for record in tx["retire"]:
++        validate_retired_state(layout, record, tx["topology"], retention_started)
++    expected_tombstones = {tombstone_name(kind, identity)
++                           for identity in retire_ids for kind in ("generation", "gcroot")}
++    observed_tombstones = {name for name in names(layout.staging) if name.startswith("retired-")}
++    deny(observed_tombstones - expected_tombstones)
++
++
++def validate_state(layout):
++    current = selector(layout, "current")
++    previous = selector(layout, "previous")
++    tx = transaction(layout)
+     deny(current is None and previous is not None)
+-    if current is not None:
+-        generation_manifest(root, current)
+-    if previous is not None:
+-        generation_manifest(root, previous)
++    current_manifest = generation_manifest(layout, current) if current else None
++    previous_manifest = generation_manifest(layout, previous) if previous else None
+     if tx is None:
++        deny(current is not None and current == previous)
++        deny(current_manifest is not None and previous_manifest is not None
++             and current_manifest["targets"] != previous_manifest["targets"])
++        staged = read_transaction_at(layout.staging, "transaction.json")
++        if staged is not None:
++            validate_transaction_contract(layout, staged, current, previous, True)
++        deny(any(name.startswith("retired-") for name in names(layout.staging)))
++        validate_staged_transaction(layout, None)
+         return current, previous, None
+-    new_manifest = generation_manifest(root, tx["new"])[1]
+-    deny(tx["old"] == tx["new"] or tx["topology"] != new_manifest["targets"])
+-    old_manifest = generation_manifest(root, tx["old"])[1] if tx["old"] else None
+-    prior_manifest = generation_manifest(root, tx["priorPrevious"])[1] if tx["priorPrevious"] else None
+-    deny(old_manifest is not None and old_manifest["targets"] != tx["topology"])
+-    deny(prior_manifest is not None and prior_manifest["targets"] != tx["topology"])
+-    # These are the only durable tuples: intent, selector committed, and
+-    # previous reconciled. A phase may lag its selector by one atomic rename.
+-    allowed = {
+-        ("prepared", tx["old"], tx["priorPrevious"]),
+-        ("prepared", tx["new"], tx["priorPrevious"]),
+-        ("committed", tx["new"], tx["priorPrevious"]),
+-        ("committed", tx["new"], tx["old"]),
+-    }
+-    deny((tx["phase"], current, previous) not in allowed)
++    validate_transaction_contract(layout, tx, current, previous)
++    validate_staged_transaction(layout, tx)
+     return current, previous, tx
+ 
+ 
+-def cleanup_transaction(root):
+-    checkpoint("cleanup.before")
+-    os.unlink(root / "transaction.json")
+-    flush_dir(root)
+-    checkpoint("cleanup.after")
++def validate_repair_gcroot_staging(layout, repairs):
++    for name in names(layout.staging):
++        if name.startswith("generation-"):
++            raise Denied()
++        if not name.startswith("gcroot-"):
++            continue
++        match = re.fullmatch(r"gcroot-([0-9a-f]{64})", name)
++        deny(match is None)
++        identity = match.group(1)
++        deny(identity not in repairs or info_at(layout.gcroots, identity) is not None)
++        stage = require_directory_at(layout.staging, name)
++        try:
++            deny(set(names(stage)) != {"owner.json"})
++            deny(require_regular_at(stage, "owner.json", 0o600, 512)
++                 != json_bytes(gcroot_marker(identity)))
++        finally:
++            os.close(stage)
++
++
++def repair_transaction_gcroots(layout, tx):
++    """Authorize journal recovery without weakening the full state validator."""
++    current = selector(layout, "current")
++    previous = selector(layout, "previous")
++    old, new, prior = tx["old"], tx["new"], tx["priorPrevious"]
++    allowed = legal_transaction_tuples(tx["operation"], old, new, prior)
++    deny((tx["phase"], current, previous) not in allowed)
++    retention_started = (tx["phase"] == "committed" and current == new and previous == old)
++    retire_by_identity = {record["identity"]: record for record in tx["retire"]}
++    retire_ids = set(retire_by_identity)
++    live_ids = {value.split("/")[1] for value in (old, new) if value}
++    deny(retire_ids & live_ids)
++    manifests = {}
++    for selected in dict.fromkeys(value for value in (new, old, prior) if value):
++        identity = selected.split("/")[1]
++        if info_at(layout.generations, identity) is None:
++            deny(selected != prior or identity not in retire_ids or not retention_started)
++            continue
++        manifest = generation_manifest(layout, selected, False)
++        deny(manifest["targets"] != tx["topology"])
++        manifests[identity] = manifest
++    deny(new.split("/")[1] not in manifests or tx["identity"] != new.split("/")[1])
++    if old is not None:
++        deny(old.split("/")[1] not in manifests)
++    referenced = {value.split("/")[1] for value in (old, new, prior) if value}
++    generations, roots = identity_sets(layout)
++    deny((generations | roots) - referenced - retire_ids)
++    expected_tombstones = {tombstone_name(kind, identity)
++                           for identity in retire_ids for kind in ("generation", "gcroot")}
++    observed_tombstones = {name for name in names(layout.staging) if name.startswith("retired-")}
++    deny(observed_tombstones - expected_tombstones)
++    repairs = {}
++    for identity, manifest in manifests.items():
++        if info_at(layout.gcroots, identity) is not None:
++            validate_gcroot_directory(layout, identity, manifest["storeRoots"], True)
++        repairs[identity] = manifest["storeRoots"]
++    for identity, record in retire_by_identity.items():
++        generation_exists = info_at(layout.generations, identity) is not None
++        root_exists = info_at(layout.gcroots, identity) is not None
++        generation_tombstone = tombstone_exists(layout, "generation", identity)
++        root_tombstone = tombstone_exists(layout, "gcroot", identity)
++        deny(generation_exists and generation_tombstone or root_exists and root_tombstone)
++        if not retention_started:
++            deny(not generation_exists or generation_tombstone or root_tombstone)
++        else:
++            deny(generation_exists and not root_exists and identity not in repairs)
++            deny(generation_tombstone and (not root_exists or root_tombstone))
++            deny(root_tombstone and (generation_exists or generation_tombstone or root_exists))
++        if generation_exists:
++            manifest = manifests.get(identity)
++            if manifest is None:
++                manifest = generation_manifest(layout, "generations/" + identity, False)
++                deny(manifest["targets"] != tx["topology"])
++                manifests[identity] = manifest
++            deny(manifest["storeRoots"] != record["storeRoots"])
++            if root_exists:
++                validate_gcroot_directory(layout, identity, record["storeRoots"], True)
++            repairs[identity] = record["storeRoots"]
++        elif root_exists:
++            validate_gcroot_directory(layout, identity, record["storeRoots"])
++        if generation_tombstone:
++            validate_tombstone(layout, "generation", record, tx["topology"])
++        if root_tombstone:
++            validate_tombstone(layout, "gcroot", record, tx["topology"])
++    validate_repair_gcroot_staging(layout, repairs)
++    validate_staged_transaction(layout, tx)
++    for identity, stores in repairs.items():
++        prepare_gcroots(layout, identity, stores)
++        deny(generation_manifest(layout, "generations/" + identity)["storeRoots"] != stores)
++    validate_state(layout)
++
++
++def repair_stable_gcroots(layout):
++    """Rebuild only roots derived from exact canonical stable generations."""
++    tx = transaction(layout)
++    if tx is not None:
++        repair_transaction_gcroots(layout, tx)
++        return
++    current = selector(layout, "current")
++    previous = selector(layout, "previous")
++    deny(current is None and previous is not None or current is not None and current == previous)
++    manifests = []
++    for selected in (current, previous):
++        if selected is None:
++            continue
++        manifest = generation_manifest(layout, selected, False)
++        manifests.append((selected, manifest))
++    if len(manifests) == 2:
++        deny(manifests[0][1]["targets"] != manifests[1][1]["targets"])
++    for selected, manifest in manifests:
++        prepare_gcroots(layout, manifest["identity"], manifest["storeRoots"])
++        deny(generation_manifest(layout, selected) != manifest)
++
++
++def validate_pending_identity(layout, identity, manifest, entries):
++    current, previous, tx = validate_state(layout)
++    deny(tx is not None)
++    selected_ids = {value.split("/")[1] for value in (current, previous) if value}
++    generations, roots = identity_sets(layout)
++    extras = (generations | roots) - selected_ids
++    deny(extras - {identity})
++    deny((generations - roots) - selected_ids)
++    if identity in generations:
++        deny(generation_manifest(layout, "generations/" + identity) != manifest)
++    elif identity in roots:
++        validate_gcroot_directory(layout, identity, manifest["storeRoots"], True)
++    generation_stages = [name for name in names(layout.staging) if name.startswith("generation-")]
++    gcroot_stages = [name for name in names(layout.staging) if name.startswith("gcroot-")]
++    deny(generation_stages not in ([], ["generation-" + identity]))
++    deny(gcroot_stages not in ([], ["gcroot-" + identity]))
++    if generation_stages:
++        validate_partial_generation(layout, identity, manifest, entries)
++    if gcroot_stages:
++        stage = require_directory_at(layout.staging, "gcroot-" + identity)
++        try:
++            deny(set(names(stage)) != {"owner.json"})
++            deny(require_regular_at(stage, "owner.json", 0o600, 512)
++                 != json_bytes(gcroot_marker(identity)))
++        finally:
++            os.close(stage)
++    staged = read_transaction_at(layout.staging, "transaction.json")
++    if staged is not None:
++        deny(staged["identity"] != identity)
+ 
+ 
+-def retain_generations(root):
+-    retained = {value.split("/")[1] for value in (selector(root / "current"), selector(root / "previous")) if value}
+-    for entry in os.scandir(root / "generations"):
+-        deny(not entry.name or re.fullmatch(r"[0-9a-f]{64}", entry.name) is None)
+-        if entry.name not in retained:
+-            generation_manifest(root, "generations/" + entry.name)
+-            import shutil
+-            shutil.rmtree(entry.path)
+-            shutil.rmtree(root / "gcroots" / entry.name)
+-    flush_dir(root / "generations"); flush_dir(root / "gcroots")
++def exposure_value(layout, target):
++    destination = layout.root_path + "/current/home/" + target
++    parent = os.path.dirname(layout.home_path + "/" + target)
++    return os.path.relpath(destination, parent)
+ 
+ 
+-def recover(home, root):
+-    current, _, tx = validate_state(root)
+-    if tx is None:
+-        return
+-    _, manifest = generation_manifest(root, tx["new"])
+-    if current == tx["new"]:
+-        if tx["old"] is not None:
+-            replace_selector(root, "previous", tx["old"])
+-        validate_exposures(home, root, manifest["targets"], True)
+-        for target in manifest["targets"]:
+-            path = home / target
+-            if lstat(path) is None:
+-                safe_ancestors(home, target, True)
+-                os.symlink(exposure_target(home, root, target), path)
++def inspect_destination(layout, target):
++    parts = relative(target).split("/")
++    descriptor = os.dup(layout.home)
++    try:
++        for part in parts[:-1]:
++            info = info_at(descriptor, part)
++            if info is None:
++                return
++            child = open_dir_at(descriptor, part)
++            require_directory_fd(child)
++            os.close(descriptor)
++            descriptor = child
++        deny(info_at(descriptor, parts[-1]) is not None)
++    finally:
++        os.close(descriptor)
++
++
++def validate_exposures(layout, targets, allow_missing=False):
++    for target in targets:
++        try:
++            parent, leaf = open_parent(layout.home, target)
++        except FileNotFoundError:
++            deny(not allow_missing)
++            continue
++        try:
++            info = info_at(parent, leaf)
++            if info is None and allow_missing:
++                continue
++            require_symlink_at(parent, leaf, exposure_value(layout, target))
++        finally:
++            os.close(parent)
++
++
++def ensure_exposures(layout, targets):
++    for target in targets:
++        parent, leaf = open_parent(layout.home, target, True)
++        try:
++            info = info_at(parent, leaf)
++            if info is None:
++                checkpoint("exposure.before")
++                os.symlink(exposure_value(layout, target), leaf, dir_fd=parent)
+                 checkpoint("exposure.after")
+-        validate_exposures(home, root, manifest["targets"], False)
+-        observe(home, root, manifest)
+-        cleanup_transaction(root)
+-    else:
+-        # No payload commit happened. Only discard the proven intent.
+-        deny(current != tx["old"])
+-        cleanup_transaction(root)
++                os.fsync(parent)
++            else:
++                require_symlink_at(parent, leaf, exposure_value(layout, target))
++        finally:
++            os.close(parent)
++    validate_exposures(layout, targets)
+ 
+ 
+-def path_precedence(home):
++def path_precedence(layout):
+     directories = os.environ.get("PATH", "").split(os.pathsep)
+-    local = str(home / ".local/bin")
++    local = layout.home_path + "/.local/bin"
+     deny(local not in directories)
+-    index = directories.index(local)
+-    for directory in directories[:index]:
++    for directory in directories[:directories.index(local)]:
+         for name in NAMES:
+-            deny(lstat(Path(directory) / name) is not None)
++            try:
++                os.lstat(Path(directory) / name)
++            except FileNotFoundError:
++                continue
++            raise Denied()
++
++
++def same_directory(left, right):
++    left_info = os.fstat(left)
++    right_info = os.fstat(right)
++    return (left_info.st_dev, left_info.st_ino) == (right_info.st_dev, right_info.st_ino)
++
++
++def exposure_terminal(layout, target, identity):
++    parent, leaf = open_parent(layout.home, target)
++    try:
++        value = require_symlink_at(parent, leaf, exposure_value(layout, target))
++        pending = value.split("/")
++        cursor = os.dup(parent)
++    finally:
++        os.close(parent)
++    selector_seen = False
++    try:
++        while pending:
++            part = pending.pop(0)
++            deny(not part or part == ".")
++            if part == "current" and not selector_seen:
++                deny(not same_directory(cursor, layout.root))
++                selected = require_symlink_at(cursor, "current")
++                deny(selected != "generations/" + identity)
++                pending = selected.split("/") + pending
++                selector_seen = True
++                continue
++            if not pending:
++                deny(not selector_seen)
++                return cursor, part
++            child = open_dir_at(cursor, part)
++            require_directory_fd(child)
++            os.close(cursor)
++            cursor = child
++    except Exception:
++        os.close(cursor)
++        raise
+ 
+ 
+-def observe(home, root, manifest):
+-    path_precedence(home)
++def observe(layout, manifest):
++    layout.verify_paths()
++    path_precedence(layout)
+     output = []
+-    home_fd = open_dir(home)
+-    root_fd = open_dir(root)
+     for binary in manifest["binaries"]:
+-        target = binary["target"]
+-        parent_fd = os.dup(home_fd)
++        parent, leaf = exposure_terminal(layout, binary["target"], manifest["identity"])
+         try:
+-            parts = target.split("/")
+-            for part in parts[:-1]:
+-                child = open_dir(part, parent_fd)
+-                deny(os.fstat(child).st_uid != os.getuid())
+-                os.close(parent_fd); parent_fd = child
+-            info = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+-            deny(not stat.S_ISLNK(info.st_mode) or os.readlink(parts[-1], dir_fd=parent_fd) != exposure_target(home, root, target))
+-            selected = os.readlink("current", dir_fd=root_fd)
+-            deny(GEN_RE.fullmatch(selected) is None or selected != "generations/" + manifest["identity"])
+-            generation_fd = open_dir(selected, root_fd)
+-            try:
+-                terminal_parent = open_dir("home", generation_fd)
+-                for part in parts[:-1]:
+-                    child = open_dir(part, terminal_parent)
+-                    os.close(terminal_parent); terminal_parent = child
+-                descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=terminal_parent)
+-                after = os.fstat(descriptor)
+-                deny(not stat.S_ISREG(after.st_mode) or after.st_nlink != 1 or stat.S_IMODE(after.st_mode) != 0o755)
+-                data = b""
+-                while True:
+-                    chunk = os.read(descriptor, 1024 * 1024)
+-                    if not chunk: break
+-                    data += chunk; deny(len(data) > MAX_BINARY)
+-                os.close(descriptor); os.close(terminal_parent)
+-            finally:
+-                os.close(generation_fd)
+-            checkpoint("proof.read")
+-            digest = hashlib.sha256(data).hexdigest()
+-            deny(digest != binary["sha256"])
+-            output.append({"name": binary["name"], "target": target, "mode": "0755", "sha256": digest})
++            mode, digest = observe_binary_at(parent, leaf)
+         finally:
+-            os.close(parent_fd)
+-    os.close(root_fd); os.close(home_fd)
++            os.close(parent)
++        checkpoint("proof.read")
++        deny(mode != binary["mode"] or digest != binary["sha256"])
++        output.append({"name": binary["name"], "target": binary["target"],
++                       "mode": mode, "sha256": digest})
++    layout.verify_paths()
+     return {"pathPrecedence": "proven", "binaries": output}
+ 
+ 
+-def preflight_locked(dto, home, root, rollback=False):
+-    recover(home, root)
+-    validate_state(root)
+-    current = selector(root / "current")
++def require_store_value(value):
++    deny(value.endswith(".drv"))
++    try:
++        os.lstat(value)
++    except FileNotFoundError:
++        raise Denied()
++
++
++def store_values_exist(dto, entries):
++    for package in dto["nixHome"]["realization"]["packages"]:
++        require_store_value(package)
++    for _, kind, value, _ in entries:
++        if kind == "store":
++            require_store_value(value)
++
++
++def preflight_stable(dto, layout, rollback=False):
++    current, previous, tx = validate_state(layout)
++    deny(tx is not None)
+     if rollback:
+-        previous = selector(root / "previous", True)
+-        generation_manifest(root, previous)
+-        deny(current is None)
+-        return
++        deny(current is None or previous is None)
++        return None
+     entries = expand(dto)
++    store_values_exist(dto, entries)
++    path_precedence(layout)
+     targets = [entry[0] for entry in entries]
+-    for _, kind, value, _ in entries:
+-        if kind == "store":
+-            deny(value.endswith(".drv") or lstat(value) is None)
+-    path_precedence(home)
+     if current is None:
+-        validate_exposures(home, root, targets, True)
++        for target in targets:
++            inspect_destination(layout, target)
+     else:
+-        _, manifest = generation_manifest(root, current)
++        manifest = generation_manifest(layout, current)
+         deny(manifest["targets"] != targets)
+-        validate_exposures(home, root, targets, False)
++        validate_exposures(layout, targets)
+     return entries
+ 
+ 
+-def fresh_preflight(dto, home):
++def fresh_preflight(dto, layout):
+     entries = expand(dto)
+-    path_precedence(home)
+-    for target, kind, value, _ in entries:
+-        inspect_destination(home, target)
+-        if kind == "store":
+-            deny(value.endswith(".drv") or lstat(value) is None)
++    store_values_exist(dto, entries)
++    path_precedence(layout)
++    for target, *_ in entries:
++        inspect_destination(layout, target)
++
++
++def prevalidate_retention(layout, keep, topology):
++    generations, roots = identity_sets(layout)
++    deny(generations != roots)
++    records = []
++    for identity in sorted(generations):
++        manifest = generation_manifest(layout, "generations/" + identity)
++        deny(manifest["targets"] != topology)
++        if identity not in keep:
++            records.append({"identity": identity, "storeRoots": manifest["storeRoots"]})
++    return records
++
++
++def retain_transaction(layout, tx):
++    checkpoint("retention.before")
++    for record in tx["retire"]:
++        identity = record["identity"]
++        validate_retired_state(layout, record, tx["topology"], True)
++        if info_at(layout.generations, identity) is not None:
++            generation_manifest(layout, "generations/" + identity)
++            name = tombstone_name("generation", identity)
++            rename_exclusive_at(layout.generations, identity, layout.staging, name)
++            os.fsync(layout.generations)
++            os.fsync(layout.staging)
++            checkpoint("retention.generation.rename")
++        if tombstone_exists(layout, "generation", identity):
++            remove_tombstone(layout, "generation", record, tx["topology"],
++                             "retention.generation")
++            checkpoint("retention.generation.after")
++        if info_at(layout.gcroots, identity) is not None:
++            validate_gcroot_directory(layout, identity, record["storeRoots"])
++            name = tombstone_name("gcroot", identity)
++            rename_exclusive_at(layout.gcroots, identity, layout.staging, name)
++            os.fsync(layout.gcroots)
++            os.fsync(layout.staging)
++            checkpoint("retention.gcroot.rename")
++        if tombstone_exists(layout, "gcroot", identity):
++            remove_tombstone(layout, "gcroot", record, tx["topology"],
++                             "retention.gcroot")
++            checkpoint("retention.gcroot.after")
++    os.fsync(layout.generations)
++    os.fsync(layout.gcroots)
++    checkpoint("retention.after")
++
++
++def cleanup_transaction(layout):
++    checkpoint("cleanup.before")
++    os.unlink("transaction.json", dir_fd=layout.root)
++    os.fsync(layout.root)
++    checkpoint("cleanup.after")
++
++
++def complete_transaction(layout, tx):
++    current, previous, observed = validate_state(layout)
++    deny(observed != tx)
++    if current != tx["new"]:
++        deny(current != tx["old"])
++        replace_selector(layout, "current", tx["new"])
++        current = tx["new"]
++    if tx["phase"] != "committed":
++        tx = dict(tx, phase="committed")
++        atomic_root_json(layout, "transaction.json", tx, "transaction_commit")
++    if tx["old"] is not None and previous != tx["old"]:
++        replace_selector(layout, "previous", tx["old"])
++    manifest = generation_manifest(layout, tx["new"])
++    if tx["operation"] == "first":
++        ensure_exposures(layout, manifest["targets"])
++    else:
++        validate_exposures(layout, manifest["targets"])
++    proof = observe(layout, manifest)
++    retain_transaction(layout, tx)
++    cleanup_transaction(layout)
++    validate_state(layout)
++    return proof, tx["operation"]
+ 
+ 
+-def realize(dto, home, root):
+-    entries = preflight_locked(dto, home, root)
+-    selected, manifest = stage_generation(root, dto, entries)
+-    old = selector(root / "current")
++def recover(layout):
++    _, _, tx = validate_state(layout)
++    if tx is None:
++        return None, None
++    return complete_transaction(layout, tx)
++
++
++def make_transaction(operation, old, new, prior, manifest, retire):
++    return {"identity": manifest["identity"], "new": new, "old": old,
++            "operation": operation, "owner": OWNER, "phase": "prepared",
++            "priorPrevious": prior, "retire": retire, "schema": VERSION,
++            "topology": manifest["targets"]}
++
++
++def realize(dto, layout):
++    entries = preflight_stable(dto, layout)
++    identity, expected = realization_document(dto, entries)
++    validate_pending_identity(layout, identity, expected, entries)
++    staged = read_transaction_at(layout.staging, "transaction.json")
++    if staged is not None:
++        old = selector(layout, "current")
++        prior = selector(layout, "previous")
++        operation = "first" if old is None else "update"
++        keep = {identity}
++        if old is not None:
++            keep.add(old.split("/")[1])
++        retire = prevalidate_retention(layout, keep, expected["targets"])
++        deny(staged != make_transaction(operation, old, "generations/" + identity,
++                                        prior, expected, retire))
++    selected, manifest = stage_generation(layout, dto, entries)
++    old = selector(layout, "current")
+     if old == selected:
+-        return observe(home, root, manifest)
+-    prior_previous = selector(root / "previous")
+-    tx = {"owner": OWNER, "schema": VERSION, "phase": "prepared", "old": old, "new": selected,
+-          "priorPrevious": prior_previous, "topology": manifest["targets"]}
+-    atomic_json(root / "transaction.json", tx, "transaction")
+-    replace_selector(root, "current", selected)
+-    tx["phase"] = "committed"
+-    atomic_json(root / "transaction.json", tx, "transaction_commit")
++        return observe(layout, manifest)
++    prior = selector(layout, "previous")
++    operation = "first" if old is None else "update"
++    keep = {identity}
+     if old is not None:
+-        replace_selector(root, "previous", old)
+-    for target in manifest["targets"]:
+-        path = home / target
+-        if lstat(path) is None:
+-            safe_ancestors(home, target, True)
+-            checkpoint("exposure.before")
+-            os.symlink(exposure_target(home, root, target), path)
+-            checkpoint("exposure.after")
+-    validate_exposures(home, root, manifest["targets"], False)
+-    proof = observe(home, root, manifest)
+-    cleanup_transaction(root)
+-    retain_generations(root)
+-    return proof
+-
+-
+-def rollback(home, root):
+-    preflight_locked(None, home, root, True)
+-    old = selector(root / "current", True)
+-    new = selector(root / "previous", True)
+-    _, manifest = generation_manifest(root, new)
+-    tx = {"owner": OWNER, "schema": VERSION, "phase": "prepared", "old": old, "new": new,
+-          "priorPrevious": new, "topology": manifest["targets"]}
+-    atomic_json(root / "transaction.json", tx, "transaction")
+-    replace_selector(root, "current", new)
+-    atomic_json(root / "transaction.json", dict(tx, phase="committed"), "transaction_commit")
+-    replace_selector(root, "previous", old)
+-    observe(home, root, manifest)
+-    cleanup_transaction(root)
+-    retain_generations(root)
++        keep.add(old.split("/")[1])
++    retire = prevalidate_retention(layout, keep, manifest["targets"])
++    tx = make_transaction(operation, old, selected, prior, manifest, retire)
++    staged = read_transaction_at(layout.staging, "transaction.json")
++    deny(staged is not None and staged != tx)
++    atomic_root_json(layout, "transaction.json", tx, "transaction")
++    return complete_transaction(layout, tx)[0]
++
++
++def rollback(layout):
++    preflight_stable(None, layout, True)
++    old = selector(layout, "current", True)
++    new = selector(layout, "previous", True)
++    manifest = generation_manifest(layout, new)
++    keep = {old.split("/")[1], new.split("/")[1]}
++    generations, roots = identity_sets(layout)
++    deny(generations != keep or roots != keep)
++    retire = prevalidate_retention(layout, keep, manifest["targets"])
++    tx = make_transaction("rollback", old, new, new, manifest, retire)
++    staged = read_transaction_at(layout.staging, "transaction.json")
++    deny(staged is not None and staged != tx)
++    atomic_root_json(layout, "transaction.json", tx, "transaction")
++    complete_transaction(layout, tx)
++
++
++def validate_lock_entry(root, lock, name="lock"):
++    lock_info = os.fstat(lock)
++    linked_info = info_at(root, name)
++    deny(linked_info is None or not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.getuid()
++         or lock_info.st_nlink != 1 or stat.S_IMODE(lock_info.st_mode) != 0o600
++         or (lock_info.st_dev, lock_info.st_ino) != (linked_info.st_dev, linked_info.st_ino))
+ 
+ 
+ def main():
+@@ -779,27 +1739,54 @@ def main():
+     deny(len(sys.argv) < 2 or sys.argv[1] not in ("preflight", "realize", "rollback"))
+     action = sys.argv[1]
+     dto = read_request(action)
+-    home = Path(os.environ.get("HOME", ""))
+-    deny(not home.is_absolute() or lstat(home) is None or stat.S_ISLNK(os.lstat(home).st_mode))
+-    root, _, _ = root_paths(home)
+-    if action == "preflight" and lstat(root) is None:
+-        fresh_preflight(dto, home)
++    home_path = os.environ.get("HOME", "")
++    home = open_absolute_directory(home_path)
++    deny(os.fstat(home).st_uid != os.getuid())
++    existing_state = open_existing_chain(home, (".local", "state"))
++    existing_root = open_existing_chain(existing_state, ("nix-home",)) if existing_state is not None else None
++    if action == "preflight" and existing_root is None:
++        if existing_state is not None:
++            os.close(existing_state)
++        layout = type("Fresh", (), {"home": home, "home_path": home_path})()
++        try:
++            fresh_preflight(dto, layout)
++        finally:
++            os.close(home)
+         return
+-    root = initialize_root(home)
+-    root_fd = open_dir(root)
+-    lock_fd = os.open("lock", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root_fd)
++    if existing_root is not None:
++        os.close(existing_root)
++    if existing_state is not None:
++        os.close(existing_state)
++    state, root = initialize_root(home_path, home)
++    lock = os.open("lock", os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=root)
++    layout = None
+     try:
+-        deny(not stat.S_ISREG(os.fstat(lock_fd).st_mode))
+-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
++        validate_lock_entry(root, lock)
++        checkpoint("lock.before_acquire")
++        fcntl.flock(lock, fcntl.LOCK_EX)
++        validate_lock_entry(root, lock)
+         checkpoint("lock.acquired")
++        layout = Layout(home_path, home, state, root)
++        validate_root(layout)
++        layout.verify_paths()
++        repair_stable_gcroots(layout)
++        proof, recovered_operation = recover(layout)
+         if action == "preflight":
+-            preflight_locked(dto, home, root)
++            entries = preflight_stable(dto, layout)
++            identity, manifest = realization_document(dto, entries)
++            validate_pending_identity(layout, identity, manifest, entries)
+         elif action == "realize":
+-            print(json.dumps(realize(dto, home, root), separators=(",", ":")))
+-        else:
+-            rollback(home, root)
++            print(json.dumps(realize(dto, layout), separators=(",", ":")))
++        elif recovered_operation != "rollback":
++            rollback(layout)
+     finally:
+-        os.close(lock_fd); os.close(root_fd)
++        os.close(lock)
++        if layout is not None:
++            layout.close()
++        else:
++            os.close(root)
++            os.close(state)
++            os.close(home)
+ 
+ 
+ try:
+diff --git a/scripts/nix-home-add-gcroot.cc b/scripts/nix-home-add-gcroot.cc
+index ddc5181..bde2461 100644
+--- a/scripts/nix-home-add-gcroot.cc
++++ b/scripts/nix-home-add-gcroot.cc
+@@ -1,15 +1,21 @@
++#ifndef NIX_HOME_SUPERVISOR_ONLY
+ #include <local-fs-store.hh>
+ #include <shared.hh>
+ #include <store-api.hh>
++#endif
+ 
+ #include <array>
+ #include <cctype>
+ #include <cerrno>
++#include <chrono>
++#include <climits>
+ #include <dirent.h>
+ #include <fcntl.h>
++#include <poll.h>
+ #include <signal.h>
+ #include <string>
+ #include <sys/stat.h>
++#include <sys/wait.h>
+ #include <unistd.h>
+ #include <vector>
+ 
+@@ -17,7 +23,152 @@ namespace {
+ constexpr auto owner = "zainfathoni/nix-home:darwin-home-realizer";
+ constexpr auto suffix = "/.local/state/nix-home/gcroots/";
+ [[noreturn]] void fail() { _exit(1); }
++volatile sig_atomic_t stopRequested = 0;
++volatile sig_atomic_t signalWriteFd = -1;
+ 
++void requestStop(int signalNumber) {
++    int saved = errno;
++    stopRequested = signalNumber;
++    int fd = signalWriteFd;
++    if (fd >= 0) {
++        char value = static_cast<char>(signalNumber);
++        auto ignored = write(fd, &value, 1);
++        (void) ignored;
++    }
++    errno = saved;
++}
++
++sigset_t blockControlSignals() {
++    sigset_t blocked{}, inherited{};
++    if (sigemptyset(&blocked) || sigaddset(&blocked, SIGINT) || sigaddset(&blocked, SIGTERM)
++        || sigaddset(&blocked, SIGHUP) || sigprocmask(SIG_BLOCK, &blocked, &inherited)) fail();
++    return inherited;
++}
++
++void restoreWorkerSignalState(const sigset_t &inheritedMask) {
++    struct sigaction defaults{};
++    defaults.sa_handler = SIG_DFL;
++    if (sigemptyset(&defaults.sa_mask) || sigaction(SIGINT, &defaults, nullptr)
++        || sigaction(SIGTERM, &defaults, nullptr) || sigaction(SIGHUP, &defaults, nullptr)
++        || sigprocmask(SIG_SETMASK, &inheritedMask, nullptr)) fail();
++}
++
++#ifndef NIX_HOME_SUPERVISOR_ONLY
++int watchdogFd(const char *value) {
++    if (!value || !*value) fail();
++    long parsed = 0;
++    for (const char *cursor = value; *cursor; ++cursor) {
++        if (!std::isdigit(static_cast<unsigned char>(*cursor))) fail();
++        int digit = *cursor - '0';
++        if (parsed > (INT_MAX - digit) / 10) fail();
++        parsed = parsed * 10 + digit;
++    }
++    int fd = static_cast<int>(parsed);
++    struct stat st{};
++    int flags = fcntl(fd, F_GETFL);
++    if (fd < 3 || flags < 0 || (flags & O_ACCMODE) != O_RDONLY || fstat(fd, &st) || !S_ISFIFO(st.st_mode)) fail();
++    return fd;
++}
++void requireParent(int fd) {
++    struct pollfd watched{fd, POLLIN | POLLHUP | POLLERR, 0};
++    int ready = poll(&watched, 1, 0);
++    if (ready < 0 || (ready > 0 && watched.revents != 0)) fail();
++}
++#endif
++
++enum class Supervision { success, parentLost, timeout, signaled, workerFailed };
++
++bool teardownWorker(pid_t worker) {
++    bool reaped = false;
++    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
++    for (;;) {
++        kill(-worker, SIGKILL);
++        if (!reaped) kill(worker, SIGKILL);
++        if (!reaped) {
++            auto waited = waitpid(worker, nullptr, WNOHANG);
++            if (waited == worker || (waited < 0 && errno == ECHILD)) reaped = true;
++            else if (waited < 0 && errno != EINTR) return false;
++        }
++        errno = 0;
++        bool groupGone = kill(-worker, 0) < 0 && errno == ESRCH;
++        if (reaped && groupGone) return true;
++        if (std::chrono::steady_clock::now() >= deadline) return false;
++        if (poll(nullptr, 0, 10) < 0 && errno != EINTR) return false;
++    }
++}
++
++Supervision supervise(pid_t worker, int parentFd, const sigset_t &inheritedMask,
++                      std::chrono::milliseconds lifetime = std::chrono::seconds(5),
++                      bool requestTestSignal = false) {
++    int signalPipe[2];
++    if (pipe(signalPipe)) {
++        teardownWorker(worker);
++        fail();
++    }
++    for (int fd : signalPipe) {
++        int descriptorFlags = fcntl(fd, F_GETFD);
++        int statusFlags = fcntl(fd, F_GETFL);
++        if (descriptorFlags < 0 || statusFlags < 0 || fcntl(fd, F_SETFD, descriptorFlags | FD_CLOEXEC)
++            || fcntl(fd, F_SETFL, statusFlags | O_NONBLOCK)) {
++            close(signalPipe[0]); close(signalPipe[1]);
++            teardownWorker(worker);
++            fail();
++        }
++    }
++    stopRequested = 0;
++    signalWriteFd = signalPipe[1];
++    struct sigaction handler{};
++    handler.sa_handler = requestStop;
++    if (sigemptyset(&handler.sa_mask) || sigaction(SIGINT, &handler, nullptr)
++        || sigaction(SIGTERM, &handler, nullptr) || sigaction(SIGHUP, &handler, nullptr)) {
++        signalWriteFd = -1;
++        close(signalPipe[0]); close(signalPipe[1]);
++        teardownWorker(worker);
++        fail();
++    }
++    auto finish = [&](Supervision outcome) {
++        signalWriteFd = -1;
++        bool clean = teardownWorker(worker);
++        close(signalPipe[0]); close(signalPipe[1]);
++        if (!clean) fail();
++        return outcome;
++    };
++    if (requestTestSignal && kill(getpid(), SIGTERM)) return finish(Supervision::workerFailed);
++    if (sigprocmask(SIG_SETMASK, &inheritedMask, nullptr)) return finish(Supervision::workerFailed);
++    auto deadline = std::chrono::steady_clock::now() + lifetime;
++    for (;;) {
++        struct pollfd parentCheck{parentFd, POLLIN | POLLHUP | POLLERR, 0};
++        int checked = poll(&parentCheck, 1, 0);
++        if (checked < 0 && errno != EINTR) return finish(Supervision::workerFailed);
++        if (checked > 0 && parentCheck.revents != 0) return finish(Supervision::parentLost);
++        if (stopRequested != 0) return finish(Supervision::signaled);
++        siginfo_t status{};
++        auto waited = waitid(P_PID, worker, &status, WEXITED | WNOHANG | WNOWAIT);
++        if (waited == 0 && status.si_pid == worker) {
++            auto outcome = status.si_code == CLD_EXITED && status.si_status == 0
++                ? Supervision::success : Supervision::workerFailed;
++            return finish(outcome);
++        }
++        if (waited < 0 && errno != EINTR) return finish(Supervision::workerFailed);
++        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline
++            - std::chrono::steady_clock::now()).count();
++        if (remaining <= 0) return finish(Supervision::timeout);
++        struct pollfd watched[] = {
++            {parentFd, POLLIN | POLLHUP | POLLERR, 0},
++            {signalPipe[0], POLLIN | POLLHUP | POLLERR, 0},
++        };
++        int ready = poll(watched, 2, remaining < 100 ? static_cast<int>(remaining) : 100);
++        if (ready < 0 && errno == EINTR) continue;
++        if (ready < 0) return finish(Supervision::workerFailed);
++        if (ready > 0) {
++            if (watched[0].revents != 0) return finish(Supervision::parentLost);
++            if (watched[1].revents != 0 || stopRequested != 0)
++                return finish(Supervision::signaled);
++        }
++    }
++}
++
++#ifndef NIX_HOME_SUPERVISOR_ONLY
+ struct Held { int fd; dev_t dev; ino_t ino; std::string path; };
+ void requireDir(int fd, bool requireOwner, bool exactMode) {
+     struct stat st{};
+@@ -62,12 +213,68 @@ std::vector<Held> walk(const std::string &parentPath, std::size_t ownerAt, std::
+ void sameWalk(const std::vector<Held> &held) {
+     for (const auto &entry : held) { int fd = open(entry.path.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC); struct stat st{}; if (fd < 0 || fstat(fd, &st) || st.st_dev != entry.dev || st.st_ino != entry.ino) fail(); if (close(fd)) fail(); }
+ }
++#endif
++
++int supervisorTest(const std::string &mode) {
++    if (mode != "success" && mode != "parent-loss" && mode != "timeout" && mode != "signal"
++        && mode != "pending-signal") fail();
++    int parentPipe[2]; if (pipe(parentPipe)) fail();
++    int pendingPipe[2]; if (pipe(pendingPipe)) fail();
++    auto inheritedMask = blockControlSignals();
++    auto worker = fork();
++    if (worker < 0) {
++        close(pendingPipe[0]); close(pendingPipe[1]);
++        sigprocmask(SIG_SETMASK, &inheritedMask, nullptr);
++        fail();
++    }
++    if (worker == 0) {
++        if (setpgid(0, 0) || close(parentPipe[0]) || close(parentPipe[1])) fail();
++        restoreWorkerSignalState(inheritedMask);
++        if (close(pendingPipe[0])) fail();
++        auto descendant = fork(); if (descendant < 0) fail();
++        if (descendant == 0) { if (close(pendingPipe[1])) fail(); for (;;) pause(); }
++        if (mode == "pending-signal") {
++            char ready = 1;
++            if (kill(getppid(), SIGTERM) || write(pendingPipe[1], &ready, 1) != 1) fail();
++        }
++        if (close(pendingPipe[1])) fail();
++        if (mode == "success") _exit(0);
++        for (;;) pause();
++    }
++    if (setpgid(worker, worker) && errno != EACCES) {
++        teardownWorker(worker); fail();
++    }
++    if (close(pendingPipe[1])) { teardownWorker(worker); fail(); }
++    if (mode == "pending-signal") {
++        char ready = 0;
++        if (read(pendingPipe[0], &ready, 1) != 1 || ready != 1) { teardownWorker(worker); fail(); }
++    }
++    if (close(pendingPipe[0])) { teardownWorker(worker); fail(); }
++    if (mode == "parent-loss" && close(parentPipe[1])) { teardownWorker(worker); fail(); }
++    auto lifetime = mode == "timeout" ? std::chrono::milliseconds(100) : std::chrono::seconds(2);
++    auto outcome = supervise(worker, parentPipe[0], inheritedMask, lifetime, mode == "signal");
++    if (mode != "parent-loss") close(parentPipe[1]);
++    close(parentPipe[0]);
++    errno = 0;
++    if (kill(-worker, 0) == 0 || errno != ESRCH) fail();
++    auto expected = mode == "success" ? Supervision::success
++        : mode == "parent-loss" ? Supervision::parentLost
++        : mode == "timeout" ? Supervision::timeout : Supervision::signaled;
++    if (outcome != expected) fail();
++    return 0;
++}
+ }
+ 
+ int main(int argc, char **argv) {
+     try {
+-        if (argc != 3) fail();
++        if (argc == 3 && std::string(argv[1]) == "--supervisor-test") return supervisorTest(argv[2]);
++#ifdef NIX_HOME_SUPERVISOR_ONLY
++        fail();
++#else
++        if (argc != 4) fail();
+         std::string storePath(argv[1]), destination(argv[2]);
++        int watch = watchdogFd(argv[3]);
++        requireParent(watch);
+         if (storePath.size() > 4096 || destination.size() > 4096 || destination.empty() || destination[0] != '/' || destination.back() == '/') fail();
+         auto boundary = destination.find(suffix); if (boundary == std::string::npos || boundary == 0) fail();
+         auto tail = destination.substr(boundary + std::char_traits<char>::length(suffix)); auto slash = tail.find('/');
+@@ -88,23 +295,45 @@ int main(int argc, char **argv) {
+         if (fsync(parent)) fail();
+         struct stat st{}; if (!fstatat(parent, index.c_str(), &st, AT_SYMLINK_NOFOLLOW)) { if (!S_ISLNK(st.st_mode) || st.st_uid != getuid() || linkValue(parent, index, storePath.size()) != storePath) fail(); } else if (errno != ENOENT) fail();
+         int nullfd = open("/dev/null", O_WRONLY | O_CLOEXEC); if (nullfd < 0 || dup2(nullfd, STDOUT_FILENO) < 0 || dup2(nullfd, STDERR_FILENO) < 0) fail(); if (close(nullfd)) fail();
+-        nix::initNix(false);
+-        signal(SIGALRM, [](int) { fail(); });
+-        alarm(4);
+-        auto store = nix::openStore("daemon");
+-        auto local = store.dynamic_pointer_cast<nix::LocalFSStore>(); if (!local) fail();
+-        auto parsed = store->parseStorePath(storePath);
+-        if (store->printStorePath(parsed) != storePath || parsed.isDerivation() || !store->isValidPath(parsed)) fail();
+-        sameWalk(held);
+-        // addPermRoot is a pathname API: retained descriptors detect replacement but
+-        // cannot prevent same-UID pathname substitution. Nix's temporary root closes
+-        // the store-GC race; this exact private owner tree is the pathname trust boundary.
+-        local->addPermRoot(parsed, destination);
+-        alarm(0);
++        requireParent(watch);
++        auto inheritedMask = blockControlSignals();
++        auto worker = fork();
++        if (worker < 0) {
++            sigprocmask(SIG_SETMASK, &inheritedMask, nullptr);
++            fail();
++        }
++        if (worker == 0) {
++            if (setpgid(0, 0) || close(watch)) fail();
++            restoreWorkerSignalState(inheritedMask);
++            nix::initNix(false);
++            signal(SIGALRM, [](int) { fail(); });
++            alarm(4);
++            auto store = nix::openStore("daemon");
++            auto local = store.dynamic_pointer_cast<nix::LocalFSStore>(); if (!local) fail();
++            auto parsed = store->parseStorePath(storePath);
++            if (store->printStorePath(parsed) != storePath || parsed.isDerivation() || !store->isValidPath(parsed)) fail();
++            sameWalk(held);
++            // addPermRoot is a pathname API: retained descriptors detect replacement but
++            // cannot prevent same-UID pathname substitution. Nix's temporary root closes
++            // the store-GC race; this exact private owner tree is the pathname trust boundary.
++            local->addPermRoot(parsed, destination);
++            alarm(0);
++            sameWalk(held);
++            if (fstatat(parent, index.c_str(), &st, AT_SYMLINK_NOFOLLOW) || !S_ISLNK(st.st_mode)
++                || st.st_uid != getuid() || linkValue(parent, index, storePath.size()) != storePath) fail();
++            _exit(0);
++        }
++        if (setpgid(worker, worker) && errno != EACCES) {
++            teardownWorker(worker);
++            fail();
++        }
++        if (supervise(worker, watch, inheritedMask) != Supervision::success) fail();
+         sameWalk(held);
+         if (fstatat(parent, index.c_str(), &st, AT_SYMLINK_NOFOLLOW) || !S_ISLNK(st.st_mode)
+             || st.st_uid != getuid() || linkValue(parent, index, storePath.size()) != storePath) fail();
++        if (close(watch)) fail();
+         for (auto &entry : held) if (close(entry.fd)) fail();
+         return 0;
++#endif
+     } catch (...) { fail(); }
+ }
+diff --git a/scripts/test-nix-home.py b/scripts/test-nix-home.py
+index 946c616..340a2bb 100755
+--- a/scripts/test-nix-home.py
++++ b/scripts/test-nix-home.py
+@@ -1,9 +1,11 @@
+ #!/usr/bin/env python3
+-import base64, hashlib, json, os, re, shutil, subprocess, sys, tempfile
++import base64, fcntl, hashlib, json, os, re, shutil, signal, stat, subprocess, sys, tempfile, time
+ from pathlib import Path
+ 
+ SCRIPT = Path(__file__).with_name("nix-home")
+ HELPER_SOURCE = Path(__file__).with_name("nix-home-add-gcroot.cc")
++namespace={}; exec(SCRIPT.read_text().split('def main():')[0],namespace)
++COVERED_CHECKPOINTS=set()
+ def binary(name, body):
+     data = ("#!/bin/sh\n" + body + "\n").encode()
+     return {"name": name, "target": ".local/bin/" + name, "mode": "0755",
+@@ -16,13 +18,67 @@ def run(home, value, ok=True, env=None):
+     p = subprocess.run([sys.executable, SCRIPT, value["action"], "--json-stdin"], input=json.dumps(value)+"\n", text=True, capture_output=True, env=e)
+     assert (p.returncode == 0) == ok, (p.stdout, p.stderr)
+     return p
++def run_script(script, home, value, ok=True, env=None):
++    environment=os.environ|{"HOME":str(home),"PATH":str(home/".local/bin")+os.pathsep+os.environ["PATH"]}|(env or {})
++    process=subprocess.run([sys.executable,script,value["action"],"--json-stdin"],input=json.dumps(value)+"\n",
++                           text=True,capture_output=True,env=environment)
++    assert (process.returncode==0)==ok,(process.stdout,process.stderr)
++    return process
++def rendered_realizer(sandbox):
++    store=sandbox/"store"; store.mkdir()
++    file=store/("a"*32+"-file"); file.write_text("store file\n")
++    package=store/("b"*32+"-package"); (package/"bin").mkdir(parents=True)
++    package_tool=package/"bin/tool"; package_tool.write_text("#!/bin/sh\necho tool\n"); package_tool.chmod(0o755)
++    fake=sandbox/"fake-helper"
++    fake.write_text(f'#!{sys.executable}\nimport os,sys\ntry: os.symlink(sys.argv[1],sys.argv[2])\nexcept FileExistsError: assert os.readlink(sys.argv[2])==sys.argv[1]\n')
++    fake.chmod(0o755)
++    script=sandbox/"nix-home"
++    rendered=SCRIPT.read_text().replace("@PYTHON@",sys.executable)
++    rendered=rendered.replace("@GCROOT_HELPER@",str(fake)).replace("/nix/store",str(store))
++    script.write_text(rendered)
++    value=dto(files={"share":str(file)}); value["nixHome"]["realization"]["packages"]=[str(package)]
++    return script,value,[str(file),str(package)]
++def rendered_version(value, version):
++    updated=json.loads(json.dumps(value)); updated["binaries"]=dto(version=version)["binaries"]
++    return updated
++def wait_for_checkpoint(receipt, point):
++    deadline=time.monotonic()+5
++    while time.monotonic()<deadline:
++        if receipt.exists() and point in receipt.read_text().splitlines(): return
++        time.sleep(0.01)
++    raise AssertionError(f"checkpoint not reached: {point}")
++def tree_snapshot(root):
++    result={}
++    def visit(path,relative):
++        info=os.lstat(path)
++        value=os.readlink(path) if stat.S_ISLNK(info.st_mode) else path.read_bytes() if stat.S_ISREG(info.st_mode) else None
++        result[relative]=(info.st_mode,value)
++        if stat.S_ISDIR(info.st_mode):
++            for child in sorted(path.iterdir(),key=lambda item:item.name):
++                visit(child,child.name if relative=="." else relative+"/"+child.name)
++    visit(root,".")
++    return result
++def force_fault(home, value, point, env=None):
++    receipt=home/"checkpoint.log"
++    receipt.unlink(missing_ok=True)
++    p=run(home,value,False,{"NIX_HOME_TESTING":"1","NIX_HOME_FAULT":point,
++                            "NIX_HOME_CHECKPOINT_LOG":str(receipt)} | (env or {}))
++    assert p.returncode==75,(point,p.returncode,p.stdout,p.stderr)
++    reached=receipt.read_text().splitlines()
++    assert reached and reached[-1]==point,(point,reached)
++    COVERED_CHECKPOINTS.add(point)
++    return p
+ with tempfile.TemporaryDirectory() as td:
+     h=Path(td); (h/".local/bin").mkdir(parents=True)
+     run(h, dto("preflight")); assert not (h/".local/state/nix-home").exists() # fresh preflight is read-only
+     old_umask=os.umask(0o0777)
+-    try: proof=json.loads(run(h,dto()).stdout)
++    try: realized=run(h,dto()); proof=json.loads(realized.stdout)
+     finally: os.umask(old_umask)
+     assert proof["pathPrecedence"]=="proven" # first/PATH
++    expected={"pathPrecedence":"proven","binaries":[
++        {"name":item["name"],"target":item["target"],"mode":"0755","sha256":item["sha256"]}
++        for item in dto()["binaries"]]}
++    assert realized.stdout==json.dumps(expected,separators=(",",":"))+"\n"
+     root=h/".local/state/nix-home"
+     assert (root.stat().st_mode & 0o777)==0o700 and ((root/"lock").stat().st_mode & 0o777)==0o600
+     assert ((h/".local/bin/karsa").resolve().stat().st_mode & 0o777)==0o755
+@@ -53,15 +109,44 @@ for source in ("/nix/store/short-x", "/nix/store/"+"e"*32+"-x", "/nix/store/"+"a
+         h=Path(td); (h/".local/bin").mkdir(parents=True)
+         run(h,dto("preflight",files={"safe":source}),False)
+ 
++# Every legal first/update/rollback tuple is exact; every other tuple in the
++# phase/selector product is mechanically classified as illegal.
++A="generations/"+"a"*64; B="generations/"+"b"*64; C="generations/"+"c"*64
++fsm_cases=(
++    ("first",None,A,None,{("prepared",None,None),("prepared",A,None),("committed",A,None)}),
++    ("update",A,B,None,{("prepared",A,None),("prepared",B,None),("committed",B,None),("committed",B,A)}),
++    ("update",A,C,B,{("prepared",A,B),("prepared",C,B),("committed",C,B),("committed",C,A)}),
++    ("rollback",A,B,B,{("prepared",A,B),("prepared",B,B),("committed",B,B),("committed",B,A)}),
++)
++for operation,old,new,prior,expected in fsm_cases:
++    legal=namespace["legal_transaction_tuples"](operation,old,new,prior); assert legal==expected
++    universe={(phase,current,previous) for phase in ("prepared","committed")
++              for current in (None,A,B,C) for previous in (None,A,B,C)}
++    assert all((item in legal)==(item in expected) for item in universe)
++for invalid in (("first",A,B,None),("update",None,B,None),("update",A,B,A),
++                ("rollback",A,B,C),("foreign",A,B,None)):
++    try: namespace["legal_transaction_tuples"](*invalid); assert False
++    except namespace["Denied"]: pass
++
++# The stable bootstrap lock serializes exact resumable ownership at every durable boundary.
++for point in ("bootstrap.lock","bootstrap.owner_record","bootstrap.directory","bootstrap.root_owner",
++              "bootstrap.children","bootstrap.before_rename","bootstrap.after_rename"):
++    with tempfile.TemporaryDirectory() as td:
++        h=Path(td); (h/".local/bin").mkdir(parents=True)
++        force_fault(h,dto(),point); run(h,dto())
++        state=h/".local/state"; assert (state/".nix-home-bootstrap.lock").is_file()
++        assert json.loads((state/".nix-home-bootstrap-owner.json").read_text())["owner"]==namespace["OWNER"]
++        assert not (state/".nix-home-bootstrap").exists()
++
+ # Selector-first provisioning and durable transaction recovery at each publication boundary.
+-faults=("stage.before","stage.after","generation.before_flush","generation.after_flush",
+-        "generation.after_rename","transaction.flush","transaction.rename","current.before_rename",
++faults=("lock.before_acquire","lock.acquired","stage.before","stage.after","generation.before_flush","generation.after_flush",
++        "generation.before_rename","generation.after_rename","transaction.flush","transaction.rename","current.before_rename",
+         "current.after_rename","transaction_commit.flush","transaction_commit.rename","exposure.before",
+         "exposure.after","cleanup.before","cleanup.after","proof.read")
+ for fault in faults:
+     with tempfile.TemporaryDirectory() as td:
+         h=Path(td); (h/".local/bin").mkdir(parents=True)
+-        run(h,dto(),False,{"NIX_HOME_TESTING":"1","NIX_HOME_FAULT":fault})
++        force_fault(h,dto(),fault)
+         # A separately locked invocation recovers only its exact journal, then converges.
+         run(h,dto())
+         assert subprocess.check_output([h/".local/bin/karsa"],text=True).strip()=="one"
+@@ -104,46 +189,67 @@ with tempfile.TemporaryDirectory() as td:
+                                stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=environment) for _ in range(4)]
+     results=[process.communicate(json.dumps(value)+"\n") for process in processes]
+     assert all(process.returncode==0 for process in processes), results
++    state=h/".local/state"; assert (state/".nix-home-bootstrap.lock").is_file()
++    assert not (state/".nix-home-bootstrap").exists()
+ 
+ # Update and rollback use the same recoverable FSM, including prior previous.
+-publication_faults=("transaction.rename","current.after_rename","transaction_commit.rename","previous.after_rename","proof.read","cleanup.before")
++publication_faults=("transaction.flush","transaction.rename","current.before_rename","current.after_rename",
++                    "transaction_commit.flush","transaction_commit.rename","previous.before_rename",
++                    "previous.after_rename","proof.read","retention.before","retention.after","cleanup.before")
+ for fault in publication_faults:
+     with tempfile.TemporaryDirectory() as td:
+         h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto())
+-        run(h,dto(version="two"),False,{"NIX_HOME_TESTING":"1","NIX_HOME_FAULT":fault})
++        force_fault(h,dto(version="two"),fault)
+         tx=h/".local/state/nix-home/transaction.json"
+         if tx.exists(): assert "priorPrevious" in json.loads(tx.read_text())
+         run(h,dto(version="two")); assert subprocess.check_output([h/".local/bin/karsa"],text=True).strip()=="two"
+-for fault in ("current.after_rename","transaction_commit.rename","previous.after_rename","cleanup.before"):
++for fault in ("transaction.flush","transaction.rename","current.before_rename","current.after_rename",
++              "transaction_commit.flush","transaction_commit.rename","previous.before_rename",
++              "previous.after_rename","proof.read","retention.before","retention.after","cleanup.before"):
+     with tempfile.TemporaryDirectory() as td:
+         h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto()); run(h,dto(version="two"))
+-        run(h,{"schema":1,"action":"rollback"},False,{"NIX_HOME_TESTING":"1","NIX_HOME_FAULT":fault})
++        force_fault(h,{"schema":1,"action":"rollback"},fault)
+         run(h,{"schema":1,"action":"rollback"})
+ 
+ # Recovery must retain its journal until descriptor-confined observation succeeds.
+ with tempfile.TemporaryDirectory() as td:
+     h=Path(td); (h/".local/bin").mkdir(parents=True)
+-    run(h,dto(),False,{"NIX_HOME_TESTING":"1","NIX_HOME_FAULT":"cleanup.before"})
++    force_fault(h,dto(),"cleanup.before")
+     root=h/".local/state/nix-home"; terminal=(h/".local/bin/karsa").resolve(); terminal.write_bytes(b"forged")
+     run(h,dto("preflight"),False); assert (root/"transaction.json").exists()
+ 
+ # The native boundary is deliberately tiny: exact argv, literal local store parse,
+ # LocalFSStore validity/non-derivation gates, descriptor traversal, and addPermRoot only.
+ helper_source=HELPER_SOURCE.read_text()
+-for required in ('#include <local-fs-store.hh>', 'argc != 3', 'initNix(false)', 'openStore("daemon")',
++for required in ('#include <local-fs-store.hh>', 'argc != 4', 'watchdogFd(argv[3])', 'poll(&watched',
++                 'fork()', 'setpgid(0, 0)', 'steady_clock::now()',
++                 'volatile sig_atomic_t stopRequested', 'pipe(signalPipe)', 'bool groupGone = kill(-worker, 0)',
++                 'kill(-worker, SIGKILL)', 'waitid(P_PID, worker', 'WNOWAIT', 'waitpid(worker',
++                 'sigprocmask(SIG_BLOCK', 'restoreWorkerSignalState(inheritedMask)',
++                 'sigaction(SIGTERM, &handler', 'sigprocmask(SIG_SETMASK, &inheritedMask',
++                 'initNix(false)', 'openStore("daemon")',
+                  'store.dynamic_pointer_cast<nix::LocalFSStore>', 'printStorePath(parsed)',
+                  'parsed.isDerivation()', 'isValidPath(parsed)', 'O_DIRECTORY | O_NOFOLLOW', 'O_NONBLOCK',
+                  'local->addPermRoot(parsed, destination)'):
+     assert required in helper_source
+ for forbidden in ('ensurePath(', 'buildPaths(', 'queryMissing(', 'substitute', 'system(', 'popen('):
+     assert forbidden not in helper_source
++assert '_exit' not in helper_source.split('void requestStop',1)[1].split('int watchdogFd',1)[0]
+ assert "Nix's temporary root closes" in helper_source
+ home_source=(SCRIPT.parent.parent/'home/default.nix').read_text()
+ assert 'pkg-config --cflags nix-main nix-store nix-util' in home_source
+ assert 'buildPlatform.canExecute pkgs.stdenv.hostPlatform' in home_source
++for mode in ('success','parent-loss','timeout','signal','pending-signal'):
++    assert f'./nix-home-add-gcroot --supervisor-test {mode}' in home_source
++with tempfile.TemporaryDirectory() as td:
++    compiled=Path(td)/"supervisor"; compiler=shutil.which("c++"); assert compiler is not None
++    subprocess.run([compiler,"-std=c++20","-Wall","-Wextra","-Werror","-DNIX_HOME_SUPERVISOR_ONLY",
++                    str(HELPER_SOURCE),"-o",str(compiled)],check=True)
++    for mode in ('success','parent-loss','timeout','signal','pending-signal'):
++        subprocess.run([compiled,"--supervisor-test",mode],check=True,timeout=5)
+ 
+-# Fake-helper integration proves Python supplies the fixed two arguments, consumes no
+-# stdout, and replays matching roots without calling any realization command. Native
++# Fake-helper integration proves Python supplies the fixed semantic arguments plus its
++# liveness FD, consumes no stdout, and replays roots without a realization command. Native
+ # libnixstore success is intentionally not simulated.
+ store_candidates=[Path('/nix/store')/name for name in os.listdir('/nix/store')
+                   if not name.endswith('.drv') and (Path('/nix/store')/name).is_file()
+@@ -172,6 +278,166 @@ with tempfile.TemporaryDirectory() as td:
+     try: namespace['add_gcroot'](store,sandbox/'exit'); assert False
+     except namespace['Denied']: pass
+ 
++# Every gcroot checkpoint runs through rendered main with valid non-empty files and
++# packages, then a separately locked invocation must converge exact roots and journal.
++for point in ("gcroot_directory.before_rename","gcroot_directory.after_rename","gcroot.before","gcroot.after"):
++    with tempfile.TemporaryDirectory() as td:
++        sandbox=Path(td); script,value,stores=rendered_realizer(sandbox); h=sandbox/"home"; (h/".local/bin").mkdir(parents=True)
++        receipt=sandbox/"receipt"
++        environment={"NIX_HOME_TESTING":"1","NIX_HOME_FAULT":point,
++                     "NIX_HOME_CHECKPOINT_LOG":str(receipt)}
++        process=run_script(script,h,value,False,environment)
++        assert process.returncode==75,(point,process.stdout,process.stderr,
++                                       receipt.read_text().splitlines() if receipt.exists() else [],
++                                       list((h/".local/state/nix-home/staging").iterdir()))
++        assert receipt.read_text().splitlines()[-1]==point
++        COVERED_CHECKPOINTS.add(point)
++        run_script(script,h,value)
++        root=h/".local/state/nix-home"; manifest=json.loads(((root/"current").resolve()/"manifest.json").read_text())
++        assert manifest["storeRoots"]==sorted(stores) and not (root/"transaction.json").exists()
++        assert list((root/"staging").iterdir())==[] and len(list((root/"generations").iterdir()))==1
++        directory=root/"gcroots"/manifest["identity"]
++        assert json.loads((directory/"owner.json").read_text())["identity"]==manifest["identity"]
++        assert [os.readlink(directory/str(index)) for index in range(len(stores))]==sorted(stores)
++
++# Prepared and committed update journals reconstruct non-empty roots for every live
++# new/old/prior generation before full FSM recovery.
++for point,phase,versions in (("current.after_rename","prepared",("one","two")),
++                             ("transaction_commit.rename","committed",("one","two","three"))):
++    with tempfile.TemporaryDirectory() as td:
++        sandbox=Path(td); script,base,stores=rendered_realizer(sandbox); h=sandbox/"home"; (h/".local/bin").mkdir(parents=True)
++        for version in versions[:-1]: run_script(script,h,rendered_version(base,version))
++        requested=rendered_version(base,versions[-1]); receipt=sandbox/"journal-receipt"
++        process=run_script(script,h,requested,False,{"NIX_HOME_TESTING":"1","NIX_HOME_FAULT":point,
++            "NIX_HOME_CHECKPOINT_LOG":str(receipt)})
++        assert process.returncode==75 and receipt.read_text().splitlines()[-1]==point
++        root=h/".local/state/nix-home"; journal=json.loads((root/"transaction.json").read_text())
++        assert journal["phase"]==phase
++        live={selected.split("/")[1] for selected in (journal["new"],journal["old"],journal["priorPrevious"]) if selected}
++        assert len(live)==len(versions)
++        for identity in live:
++            directory=root/"gcroots"/identity
++            if phase=="prepared":
++                shutil.rmtree(directory)
++            else:
++                for index in range(len(stores)): (directory/str(index)).unlink()
++        run_script(script,h,requested)
++        assert not (root/"transaction.json").exists() and list((root/"staging").iterdir())==[]
++        for selected in (os.readlink(root/"current"),os.readlink(root/"previous")):
++            identity=selected.split("/")[1]; directory=root/"gcroots"/identity
++            assert [os.readlink(directory/str(index)) for index in range(len(stores))]==sorted(stores)
++
++# Exact prepared and committed journal recovery survives every gcroot publication fault,
++# including an owned staging directory that has not yet reached the destination.
++for phase,journal_point,versions in (("prepared","current.after_rename",("one","two")),
++                                     ("committed","transaction_commit.rename",("one","two","three"))):
++    for repair_point in ("gcroot_directory.before_rename","gcroot_directory.after_rename",
++                         "gcroot.before","gcroot.after"):
++        with tempfile.TemporaryDirectory() as td:
++            sandbox=Path(td); script,base,stores=rendered_realizer(sandbox); h=sandbox/"home"; (h/".local/bin").mkdir(parents=True)
++            for version in versions[:-1]: run_script(script,h,rendered_version(base,version))
++            requested=rendered_version(base,versions[-1])
++            process=run_script(script,h,requested,False,{"NIX_HOME_TESTING":"1","NIX_HOME_FAULT":journal_point})
++            assert process.returncode==75
++            root=h/".local/state/nix-home"; journal=json.loads((root/"transaction.json").read_text())
++            assert journal["phase"]==phase
++            live={selected.split("/")[1] for selected in
++                  (journal["new"],journal["old"],journal["priorPrevious"]) if selected}
++            for identity in live: shutil.rmtree(root/"gcroots"/identity)
++            receipt=sandbox/"repair-receipt"
++            process=run_script(script,h,requested,False,{"NIX_HOME_TESTING":"1","NIX_HOME_FAULT":repair_point,
++                "NIX_HOME_CHECKPOINT_LOG":str(receipt)})
++            assert process.returncode==75 and receipt.read_text().splitlines()[-1]==repair_point
++            if repair_point=="gcroot_directory.before_rename":
++                staged=[item for item in (root/"staging").iterdir() if item.name.startswith("gcroot-")]
++                assert len(staged)==1 and set(item.name for item in staged[0].iterdir())=={"owner.json"}
++            run_script(script,h,requested)
++            selected={os.readlink(root/name).split("/")[1] for name in ("current","previous")}
++            assert set(item.name for item in (root/"generations").iterdir())==selected
++            assert set(item.name for item in (root/"gcroots").iterdir())==selected
++            assert not (root/"transaction.json").exists() and list((root/"staging").iterdir())==[]
++            for identity in selected:
++                directory=root/"gcroots"/identity
++                assert json.loads((directory/"owner.json").read_text())["identity"]==identity
++                assert [os.readlink(directory/str(index)) for index in range(len(stores))]==sorted(stores)
++
++# A journal does not authorize replacement of a conflicting partial root.
++with tempfile.TemporaryDirectory() as td:
++    sandbox=Path(td); script,base,_=rendered_realizer(sandbox); h=sandbox/"home"; (h/".local/bin").mkdir(parents=True)
++    run_script(script,h,rendered_version(base,"one")); requested=rendered_version(base,"two")
++    process=run_script(script,h,requested,False,{"NIX_HOME_TESTING":"1","NIX_HOME_FAULT":"current.after_rename"})
++    assert process.returncode==75
++    root=h/".local/state/nix-home"; journal=json.loads((root/"transaction.json").read_text())
++    conflict=root/"gcroots"/journal["identity"]/"0"; conflict.unlink(); conflict.symlink_to("/conflicting-root")
++    before=conflict.readlink(); run_script(script,h,requested,False)
++    assert conflict.readlink()==before and (root/"transaction.json").exists()
++
++# Journal recovery accepts no foreign, conflicting-destination, or non-exact gcroot stage.
++for staged_case in ("foreign-identity","destination-present","extra-entry"):
++    with tempfile.TemporaryDirectory() as td:
++        sandbox=Path(td); script,base,_=rendered_realizer(sandbox); h=sandbox/"home"; (h/".local/bin").mkdir(parents=True)
++        run_script(script,h,rendered_version(base,"one")); requested=rendered_version(base,"two")
++        process=run_script(script,h,requested,False,{"NIX_HOME_TESTING":"1","NIX_HOME_FAULT":"current.after_rename"})
++        assert process.returncode==75
++        root=h/".local/state/nix-home"; journal=json.loads((root/"transaction.json").read_text())
++        identity=journal["identity"]
++        if staged_case!="destination-present": shutil.rmtree(root/"gcroots"/identity)
++        staged_identity="f"*64 if staged_case=="foreign-identity" else identity
++        stage=root/"staging"/("gcroot-"+staged_identity); stage.mkdir(mode=0o700)
++        marker={"identity":staged_identity,"owner":namespace["OWNER"],"schema":namespace["VERSION"]}
++        (stage/"owner.json").write_text(json.dumps(marker,separators=(",",":"),sort_keys=True)+"\n")
++        os.chmod(stage/"owner.json",0o600)
++        if staged_case=="extra-entry": (stage/"foreign").write_text("foreign\n")
++        before=set(item.name for item in stage.iterdir()); run_script(script,h,requested,False)
++        assert set(item.name for item in stage.iterdir())==before and (root/"transaction.json").exists()
++
++# Stable current+previous generations with non-empty roots are both reconstructed,
++# and rollback can independently reconstruct its missing previous root.
++with tempfile.TemporaryDirectory() as td:
++    sandbox=Path(td); script,base,stores=rendered_realizer(sandbox); h=sandbox/"home"; (h/".local/bin").mkdir(parents=True)
++    run_script(script,h,rendered_version(base,"one")); run_script(script,h,rendered_version(base,"two"))
++    root=h/".local/state/nix-home"; selected=(os.readlink(root/"current"),os.readlink(root/"previous"))
++    for item in selected: shutil.rmtree(root/"gcroots"/item.split("/")[1])
++    run_script(script,h,rendered_version(base,"two"))
++    for item in selected: assert (root/"gcroots"/item.split("/")[1]/"0").is_symlink()
++    previous=os.readlink(root/"previous"); shutil.rmtree(root/"gcroots"/previous.split("/")[1])
++    run_script(script,h,{"schema":1,"action":"rollback"})
++    assert os.readlink(root/"current")==previous and (root/"gcroots"/previous.split("/")[1]/"0").is_symlink()
++
++# Killing the Python parent closes the inherited liveness pipe. A protocol-aware fake
++# helper must then kill and reap its own descendant before exiting.
++with tempfile.TemporaryDirectory() as td:
++    sandbox=Path(td); fake=sandbox/"watch-helper"; pids=sandbox/"pids"
++    fake.write_text(f'''#!{sys.executable}
++import os,select,signal,sys,time
++watch=int(sys.argv[3]); child=os.fork()
++if child==0:
++ open({str(pids)!r},"a").write("child "+str(os.getpid())+"\\n")
++ while True: time.sleep(1)
++open({str(pids)!r},"a").write("helper "+str(os.getpid())+"\\n")
++poll=select.poll(); poll.register(watch,select.POLLIN|select.POLLHUP|select.POLLERR); poll.poll(10000)
++os.kill(child,signal.SIGKILL); os.waitpid(child,0)
++raise SystemExit(1)
++'''); fake.chmod(0o755)
++    driver=f'''ns={{}}\nexec(open({str(SCRIPT.resolve())!r}).read().split("def main():")[0],ns)\nns["GCROOT_HELPER"]={str(fake)!r}\nns["HELPER_TIMEOUT"]=30\nns["add_gcroot"]("/nix/store/"+"a"*32+"-fake",{str(sandbox/'root')!r})\n'''
++    parent=subprocess.Popen([sys.executable,"-c",driver])
++    deadline=time.monotonic()+3
++    while time.monotonic()<deadline:
++        if pids.exists() and len(pids.read_text().splitlines())==2: break
++        time.sleep(0.01)
++    else: parent.kill(); assert False,"watchdog helper did not start"
++    watched={kind:int(pid) for kind,pid in (line.split() for line in pids.read_text().splitlines())}
++    os.kill(parent.pid,signal.SIGKILL); parent.wait(timeout=3)
++    deadline=time.monotonic()+3
++    while time.monotonic()<deadline:
++        alive=[]
++        for pid in watched.values():
++            try: os.kill(pid,0); alive.append(pid)
++            except ProcessLookupError: pass
++        if not alive: break
++        time.sleep(0.02)
++    assert not alive,watched
++
+ # Canonical realization and exact gcroot owner markers are identity-bound.
+ with tempfile.TemporaryDirectory() as td:
+     h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto())
+@@ -184,4 +450,222 @@ with tempfile.TemporaryDirectory() as td:
+     marker=root/"gcroots"/identity/"owner.json"; marker.write_text("{}\n")
+     run(h,dto("preflight"),False); assert marker.read_text()=="{}\n"
+ 
+-print(f"{14 + len(faults) + 12 + len(publication_faults) + 4 + 3} deterministic realizer scenarios passed")
++# Exact canonical generations reconstruct only matching missing gcroot directories,
++# both on stable reuse and before rollback; conflicting roots above remain denied.
++with tempfile.TemporaryDirectory() as td:
++    h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto())
++    root=h/".local/state/nix-home"; identity=os.readlink(root/"current").split("/")[1]
++    shutil.rmtree(root/"gcroots"/identity); run(h,dto())
++    assert json.loads((root/"gcroots"/identity/"owner.json").read_text())["identity"]==identity
++with tempfile.TemporaryDirectory() as td:
++    h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto()); run(h,dto(version="two"))
++    root=h/".local/state/nix-home"; previous=os.readlink(root/"previous"); identity=previous.split("/")[1]
++    shutil.rmtree(root/"gcroots"/identity); run(h,{"schema":1,"action":"rollback"})
++    assert os.readlink(root/"current")==previous and (root/"gcroots"/identity/"owner.json").exists()
++
++# Descriptor pinning defeats both root replacement and replacement of a home ancestor:
++# every mutation remains on the opened inode and the final pathname identity proof denies.
++namespace={}; exec(SCRIPT.read_text().split('def main():')[0],namespace)
++def opened_layout(home):
++    home_fd=namespace['open_absolute_directory'](str(home))
++    state_fd=namespace['open_existing_chain'](home_fd,(".local","state"))
++    root_fd=namespace['open_existing_chain'](state_fd,("nix-home",))
++    return namespace['Layout'](str(home),home_fd,state_fd,root_fd)
++with tempfile.TemporaryDirectory() as td:
++    h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto())
++    layout=opened_layout(h); root=h/".local/state/nix-home"; detached=root.with_name("nix-home-held")
++    root.rename(detached); root.mkdir(mode=0o700)
++    namespace['write_exclusive_at'](layout.root,"fd-proof",b"held\n")
++    assert (detached/"fd-proof").read_bytes()==b"held\n" and not (root/"fd-proof").exists()
++    try: layout.verify_paths(); assert False
++    except namespace['Denied']: pass
++    layout.close()
++with tempfile.TemporaryDirectory() as td:
++    base=Path(td); h=base/"ancestor"/"home"; (h/".local/bin").mkdir(parents=True); run(h,dto())
++    layout=opened_layout(h); (base/"ancestor").rename(base/"ancestor-held"); (base/"ancestor"/"home").mkdir(parents=True)
++    parent,leaf=namespace['open_parent'](layout.home,"nested/proof",True)
++    try: namespace['write_exclusive_at'](parent,leaf,b"held\n")
++    finally: os.close(parent)
++    assert (base/"ancestor-held/home/nested/proof").read_bytes()==b"held\n"
++    assert not (base/"ancestor/home/nested/proof").exists()
++    try: layout.verify_paths(); assert False
++    except namespace['Denied']: pass
++    layout.close()
++
++# The lock must still name the held inode after a blocking acquisition, and no-replace
++# directory publication must preserve a raced-in destination.
++with tempfile.TemporaryDirectory() as td:
++    h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto()); layout=opened_layout(h)
++    held=os.open("lock",os.O_RDONLY|os.O_NOFOLLOW,dir_fd=layout.root)
++    namespace['validate_lock_entry'](layout.root,held)
++    os.unlink("lock",dir_fd=layout.root); namespace['write_exclusive_at'](layout.root,"lock",b"",0o600)
++    try: namespace['validate_lock_entry'](layout.root,held); assert False
++    except namespace['Denied']: pass
++    os.close(held); layout.close()
++# Exercise the same replacement race through main: the contender opens the old lock,
++# blocks, then must reject it after flock when the root entry names a new inode.
++with tempfile.TemporaryDirectory() as td:
++    h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto())
++    root=h/".local/state/nix-home"; held=os.open(root/"lock",os.O_RDONLY|os.O_NOFOLLOW)
++    fcntl.flock(held,fcntl.LOCK_EX)
++    receipt=h/"race-checkpoints.log"; environment=os.environ|{"HOME":str(h),
++        "PATH":str(h/".local/bin")+os.pathsep+os.environ["PATH"],"NIX_HOME_TESTING":"1",
++        "NIX_HOME_CHECKPOINT_LOG":str(receipt)}
++    process=subprocess.Popen([sys.executable,SCRIPT,"preflight","--json-stdin"],stdin=subprocess.PIPE,
++                             stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=environment)
++    process.stdin.write(json.dumps(dto("preflight"))+"\n"); process.stdin.close()
++    deadline=time.monotonic()+3
++    while time.monotonic()<deadline:
++        if receipt.exists() and "lock.before_acquire" in receipt.read_text().splitlines(): break
++        time.sleep(0.01)
++    else: process.kill(); assert False,"contender never reached pre-flock checkpoint"
++    (root/"lock").unlink(); (root/"lock").write_bytes(b""); os.chmod(root/"lock",0o600)
++    fcntl.flock(held,fcntl.LOCK_UN); os.close(held)
++    process.wait(timeout=3); assert process.returncode==1 and os.readlink(root/"current").startswith("generations/")
++
++# Main must also reject replacement of the locked root itself and of an ancestor above
++# a nested HOME, after opening every descriptor but while blocked in flock.
++for replace_ancestor in (False,True):
++    with tempfile.TemporaryDirectory() as td:
++        base=Path(td); ancestor=base/"ancestor"; h=ancestor/"nested/home"
++        (h/".local/bin").mkdir(parents=True); run(h,dto())
++        root=h/".local/state/nix-home"; before=os.readlink(root/"current")
++        held=os.open(root/"lock",os.O_RDONLY|os.O_NOFOLLOW); fcntl.flock(held,fcntl.LOCK_EX)
++        receipt=base/"pathname-race.log"; environment=os.environ|{"HOME":str(h),
++            "PATH":str(h/".local/bin")+os.pathsep+os.environ["PATH"],"NIX_HOME_TESTING":"1",
++            "NIX_HOME_CHECKPOINT_LOG":str(receipt)}
++        process=subprocess.Popen([sys.executable,SCRIPT,"realize","--json-stdin"],stdin=subprocess.PIPE,
++                                 stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=environment)
++        process.stdin.write(json.dumps(dto(version="replacement-race"))+"\n"); process.stdin.close()
++        wait_for_checkpoint(receipt,"lock.before_acquire")
++        detached=base/("ancestor-held" if replace_ancestor else "nix-home-held")
++        if replace_ancestor:
++            ancestor.rename(detached); shutil.copytree(detached,ancestor,symlinks=True)
++            old_root=detached/"nested/home/.local/state/nix-home"
++            replacement_root=ancestor/"nested/home/.local/state/nix-home"
++        else:
++            root.rename(detached); shutil.copytree(detached,root,symlinks=True)
++            old_root=detached; replacement_root=root
++        old_before=tree_snapshot(old_root); replacement_before=tree_snapshot(replacement_root)
++        fcntl.flock(held,fcntl.LOCK_UN); os.close(held)
++        process.wait(timeout=5)
++        assert process.returncode==1
++        assert tree_snapshot(old_root)==old_before and tree_snapshot(replacement_root)==replacement_before
++        for candidate in (old_root,replacement_root):
++            assert os.readlink(candidate/"current")==before
++            assert not (candidate/"transaction.json").exists() and len(list((candidate/"generations").iterdir()))==1
++
++# Descriptor observation validates the actual terminal's executable mode, not only
++# manifest claims or the intermediate symlink topology.
++with tempfile.TemporaryDirectory() as td:
++    sandbox=Path(td); script,value,_=rendered_realizer(sandbox); h=sandbox/"home"; (h/".local/bin").mkdir(parents=True)
++    run_script(script,h,value)
++    terminal=(h/".local/bin/karsa").resolve(); terminal.chmod(0o644)
++    result=run_script(script,h,value,False)
++    assert result.returncode==1 and terminal.read_text().startswith("#!/bin/sh\n")
++with tempfile.TemporaryDirectory() as td:
++    parent=os.open(td,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
++    namespace['create_directory_at'](parent,"source"); namespace['create_directory_at'](parent,"destination")
++    try: namespace['rename_exclusive_at'](parent,"source",parent,"destination"); assert False
++    except FileExistsError: pass
++    assert set(os.listdir(parent))=={"source","destination"}; os.close(parent)
++
++# The journal remains durable through proof and each retention boundary, and recovery
++# accepts only the exact owned partial pair produced by generation-first deletion.
++for fault in ("retention.before","retention.generation.rename","retention.generation.delete",
++              "retention.generation.after","retention.gcroot.rename","retention.gcroot.delete",
++              "retention.gcroot.after","retention.after"):
++    with tempfile.TemporaryDirectory() as td:
++        h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto()); run(h,dto(version="two"))
++        force_fault(h,dto(version="three"),fault)
++        root=h/".local/state/nix-home"; assert (root/"transaction.json").exists()
++        run(h,dto(version="three")); assert not (root/"transaction.json").exists()
++        assert len(list((root/"generations").iterdir()))==2 and len(list((root/"gcroots").iterdir()))==2
++
++# Retention is completely prevalidated before selector commit.
++with tempfile.TemporaryDirectory() as td:
++    h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto()); run(h,dto(version="two"))
++    root=h/".local/state/nix-home"; before=os.readlink(root/"current")
++    retired=os.readlink(root/"previous").split("/")[1]
++    marker=root/"gcroots"/retired/"owner.json"; marker.write_text("{}\n")
++    run(h,dto(version="three"),False)
++    assert os.readlink(root/"current")==before and not (root/"transaction.json").exists() and marker.read_text()=="{}\n"
++
++# A prepared intent cannot claim retention already ran: all retirement references
++# must remain fully valid until the committed final selector tuple exists.
++with tempfile.TemporaryDirectory() as td:
++    h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto()); run(h,dto(version="two"))
++    force_fault(h,dto(version="three"),"transaction.flush")
++    root=h/".local/state/nix-home"; staged=root/"staging/transaction.json"; value=json.loads(staged.read_text())
++    retired=value["retire"][0]["identity"]; shutil.rmtree(root/"generations"/retired)
++    before=staged.read_bytes(); run(h,dto("preflight",version="three"),False)
++    assert staged.read_bytes()==before and (root/"gcroots"/retired).exists()
++
++# A staged realization is resumable only by the exact matching identity.
++with tempfile.TemporaryDirectory() as td:
++    h=Path(td); (h/".local/bin").mkdir(parents=True)
++    force_fault(h,dto(),"stage.after")
++    root=h/".local/state/nix-home"; staged={item.name for item in (root/"staging").iterdir()}
++    run(h,dto(version="two"),False); assert {item.name for item in (root/"staging").iterdir()}==staged
++    run(h,dto()); assert not any(item.name.startswith("generation-") for item in (root/"staging").iterdir())
++
++# Exact manifest, generation marker, tree, selector, and journal semantics reject
++# canonical-looking forgeries without reclaiming or replacing them.
++manifest_mutations=(
++    lambda value: value.__setitem__("identity","0"*64),
++    lambda value: value["binaries"].append(dict(value["binaries"][0])),
++    lambda value: value.__setitem__("packages",{}),
++    lambda value: value["storeRoots"].append("/nix/store/"+"a"*32+"-extra"),
++)
++for mutate in manifest_mutations:
++    with tempfile.TemporaryDirectory() as td:
++        h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto())
++        root=h/".local/state/nix-home"; generation=(root/"current").resolve(); manifest=generation/"manifest.json"
++        value=json.loads(manifest.read_text()); mutate(value)
++        manifest.write_text(json.dumps(value,separators=(",",":"),sort_keys=True)+"\n")
++        before=manifest.read_bytes(); run(h,dto("preflight"),False); assert manifest.read_bytes()==before
++# Even a self-consistent identity cannot authorize a target overlapping protocol state.
++with tempfile.TemporaryDirectory() as td:
++    h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto())
++    manifest=json.loads(((h/".local/state/nix-home/current").resolve()/"manifest.json").read_text())
++    store="/nix/store/"+"a"*32+"-forged"; target=".local/state/nix-home/forged"
++    manifest["entries"].append([target,"store",store]); manifest["targets"].append(target); manifest["storeRoots"]=[store]
++    canonical={key:manifest[key] for key in ("binaries","entries","owner","packages","schema","storeRoots","targets")}
++    identity=hashlib.sha256(namespace['json_bytes'](canonical)[:-1]).hexdigest(); manifest["identity"]=identity
++    try: namespace['validate_manifest_semantics'](manifest,"generations/"+identity); assert False
++    except namespace['Denied']: pass
++with tempfile.TemporaryDirectory() as td:
++    h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto())
++    root=h/".local/state/nix-home"; generation=(root/"current").resolve(); extra=generation/"home/extra"
++    extra.write_text("foreign"); run(h,dto("preflight"),False); assert extra.read_text()=="foreign"
++with tempfile.TemporaryDirectory() as td:
++    h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto()); run(h,dto(version="two"))
++    root=h/".local/state/nix-home"; current=os.readlink(root/"current"); (root/"previous").unlink(); (root/"previous").symlink_to(current)
++    run(h,{"schema":1,"action":"rollback"},False); assert os.readlink(root/"previous")==current
++with tempfile.TemporaryDirectory() as td:
++    h=Path(td); (h/".local/bin").mkdir(parents=True)
++    force_fault(h,dto(),"cleanup.before")
++    tx=h/".local/state/nix-home/transaction.json"; value=json.loads(tx.read_text()); value["identity"]="0"*64
++    tx.write_text(json.dumps(value,separators=(",",":"),sort_keys=True)+"\n"); before=tx.read_bytes()
++    run(h,dto("preflight"),False); assert tx.read_bytes()==before
++
++# Partial gcroot metadata resumes only when every durable marker matches. The helper
++# is replayed even for an already matching root, and every failure remains bounded.
++with tempfile.TemporaryDirectory() as td:
++    h=Path(td); (h/".local/bin").mkdir(parents=True); run(h,dto())
++    layout=opened_layout(h); sandbox=Path(td)/"helper"; log=Path(td)/"root-helper.log"
++    store="/nix/store/"+"a"*32+"-fake"; identity="f"*64
++    sandbox.write_text(f'#!{sys.executable}\nimport sys\nopen({str(log)!r},"a").write("fail\\n")\nraise SystemExit(7)\n'); sandbox.chmod(0o755)
++    namespace['GCROOT_HELPER']=str(sandbox)
++    try: namespace['prepare_gcroots'](layout,identity,[store]); assert False
++    except namespace['Denied']: pass
++    partial=Path(h/".local/state/nix-home/gcroots"/identity)
++    assert json.loads((partial/"owner.json").read_text())["identity"]==identity and (partial/"0.json").exists() and not (partial/"0").exists()
++    sandbox.write_text(f'#!{sys.executable}\nimport os,sys\nopen({str(log)!r},"a").write("ok\\n")\ntry: os.symlink(sys.argv[1],sys.argv[2])\nexcept FileExistsError: assert os.readlink(sys.argv[2])==sys.argv[1]\n'); sandbox.chmod(0o755)
++    namespace['prepare_gcroots'](layout,identity,[store]); namespace['prepare_gcroots'](layout,identity,[store])
++    assert log.read_text().splitlines()==["fail","ok","ok"]
++    layout.close()
++
++assert COVERED_CHECKPOINTS==set(namespace["CHECKPOINTS"]),(
++    "uncovered checkpoints",sorted(set(namespace["CHECKPOINTS"])-COVERED_CHECKPOINTS))
++print("deterministic realizer protocol scenarios passed")
