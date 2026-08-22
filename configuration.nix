@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ pkgs, lib, ... }:
 let
   sshTailnetConfig = pkgs.writeText "sshd-tailnet.conf" ''
     Port 22022
@@ -90,6 +90,19 @@ in
   # `auto-optimise-store` | Storage optimization: https://nixos.wiki/wiki/Storage_optimization
   # `experimental-features` | Enable flakes permanently: https://nixos.wiki/wiki/Flakes#Permanent
   # `extra-nix-path` | Temporary fix for `nix-shell`: https://github.com/DeterminateSystems/nix-installer/pull/270
+  # Include Ghostty's own terminfo directory so terminals using
+  # `xterm-ghostty` can resolve terminal capabilities in Nix-managed
+  # environments (including nix-darwin's generated set-environment script).
+  environment.variables.TERMINFO_DIRS = lib.mkForce
+    [
+      "$HOME/.nix-profile/share/terminfo"
+      "/etc/profiles/per-user/$USER/share/terminfo"
+      "/run/current-system/sw/share/terminfo"
+      "/nix/var/nix/profiles/default/share/terminfo"
+      "/usr/share/terminfo"
+      "/Applications/Ghostty.app/Contents/Resources/terminfo"
+    ];
+
   nix.extraOptions = ''
     auto-optimise-store = true
     experimental-features = nix-command flakes

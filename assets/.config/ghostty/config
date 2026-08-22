@@ -1,0 +1,2 @@
+# Keep Ghostty terminal type consistent across hosts.
+term = "xterm-ghostty"
