@@ -102,6 +102,10 @@
       if [ -f "$HOME/.secrets.env" ]; then
         source "$HOME/.secrets.env"
       fi
+
+      # Enable vim-style keybindings in the Zsh prompt.
+      bindkey -v
+      export KEYTIMEOUT=10
     '';
 
     # Style Z Shell using Starship, a cross-shell prompt

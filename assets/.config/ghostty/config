@@ -1,2 +1,35 @@
 # Keep Ghostty terminal type consistent across hosts.
 term = "xterm-ghostty"
+
+# Warp parity: font size and visual density
+font-size = 12
+
+# Warp parity: glassy, low-contrast terminal look
+background-opacity = 0.7
+background-blur = 5
+
+# Match Warp clipboard behavior:
+# - reads blocked unless explicit via OSC 52, writes allowed.
+clipboard-read = deny
+clipboard-write = allow
+
+# Match Warp bell behavior.
+bell-features = system
+
+# Shell defaults are preserved from existing Warp session behavior
+shell-integration = detect
+shell-integration-features = cursor,title,path
+
+# Restore-like behavior: reopen window state when available.
+window-save-state = always
+window-theme = dark
+
+# macOS input parity: prefer left option as alt
+macos-option-as-alt = left
+
+# Keep window style close to Warp's "toggle all windows" behavior.
+keybind = global:alt+space=toggle_visibility
+
+# Keep behavior close to Warp defaults:
+# - only close when user quits, don't auto-reset sessions.
+confirm-close-surface = false
