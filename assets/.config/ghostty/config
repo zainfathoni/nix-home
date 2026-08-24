@@ -18,7 +18,7 @@ bell-features = system
 
 # Shell defaults are preserved from existing Warp session behavior
 shell-integration = detect
-shell-integration-features = cursor,title,path
+shell-integration-features = cursor,title,path,ssh-env,ssh-terminfo
 
 # Restore-like behavior: reopen window state when available.
 window-save-state = always
