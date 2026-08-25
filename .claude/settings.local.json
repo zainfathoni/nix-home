@@ -6,7 +6,8 @@
       "Bash(cat:*)",
       "Bash(nix search:*)",
       "Bash(git -C /Users/zain/Code/GitHub/zainfathoni/nix-home log --oneline -5)",
-      "Bash(nix fmt *)"
+      "Bash(nix fmt *)",
+      "Bash(git fetch *)"
     ],
     "deny": []
   }
