@@ -79,6 +79,11 @@ let
 
     exit 1
   '';
+
+  amuxLaunch = pkgs.writeShellScript "amux-launch" ''
+    /bin/sleep 15
+    exec /Users/zain/.local/bin/amux launch --all
+  '';
 in
 {
   # Make sure the nix daemon always runs
@@ -158,6 +163,23 @@ in
       ProcessType = "Background";
       StandardOutPath = "/Users/zain/Library/Logs/dev.zainf.ssh-tailnet-serve.log";
       StandardErrorPath = "/Users/zain/Library/Logs/dev.zainf.ssh-tailnet-serve.log";
+    };
+  };
+
+  launchd.user.agents.amux-launch = {
+    command = amuxLaunch;
+    serviceConfig = {
+      Label = "dev.zainf.amux-launch";
+      RunAtLoad = true;
+      AbandonProcessGroup = true;
+      ProcessType = "Background";
+      EnvironmentVariables = {
+        LANG = "en_US.UTF-8";
+        LC_ALL = "en_US.UTF-8";
+        PATH = "/Users/zain/.local/bin:/Users/zain/.nix-profile/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
+      };
+      StandardOutPath = "/Users/zain/Library/Logs/dev.zainf.amux-launch.log";
+      StandardErrorPath = "/Users/zain/Library/Logs/dev.zainf.amux-launch.log";
     };
   };
 
