@@ -6,17 +6,6 @@
 
 custom: ""
 
-amux:
-  name: Amux
-  agent: codex
-  model: gpt-5.3-codex-spark
-  reasoning_effort: medium
-  prompt: >-
-    Your task is to spawn or revive a tmux window at this directory according to $amux skill
-    - Checkout to the branch of this PR
-    - If the tmux window exists, use $amux skill to revive it
-    - If no tmux window exists, use $amux skill to spawn a new tmux window at this directory
-
 rebaser:
   name: Rebaser
   agent: codex
