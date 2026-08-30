@@ -176,7 +176,7 @@ in
       EnvironmentVariables = {
         LANG = "en_US.UTF-8";
         LC_ALL = "en_US.UTF-8";
-        PATH = "/Users/zain/.local/bin:/Users/zain/.nix-profile/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
+        PATH = "/Users/zain/.local/bin:/Users/zain/.amp/bin:/Users/zain/.nix-profile/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
       };
       StandardOutPath = "/Users/zain/Library/Logs/dev.zainf.amux-launch.log";
       StandardErrorPath = "/Users/zain/Library/Logs/dev.zainf.amux-launch.log";
