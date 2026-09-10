@@ -78,7 +78,7 @@
     "docker-desktop"
     "ghostty"
     "gitkraken"
-    "google-chrome@canary"
+    "google-chrome"
     "gpg-suite-no-mail"
     "ledger-wallet"
     "logi-options+"
