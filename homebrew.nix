@@ -40,6 +40,7 @@
     "mysql"
     "pyenv"
     "rbenv"
+    "ripgrep"
     "shopify-cli"
     "sst/tap/opencode"
     "tmux"
