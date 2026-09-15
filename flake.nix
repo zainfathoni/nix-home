@@ -77,17 +77,30 @@
 
       lib.mkDarwinConfiguration = mkDarwinConfiguration;
 
-      checks.${system}.public-home-inputs =
-        assert nixpkgsLib.elem syntheticPackage syntheticHome.config.home.packages;
-        assert syntheticHome.config.home.file.".config/public-home/source".source == syntheticSource;
-        assert nixpkgsLib.elem syntheticPackage syntheticDarwin.config.home-manager.users.zain.home.packages;
-        assert syntheticDarwin.config.home-manager.users.zain.home.file.".config/public-home/source".source == syntheticSource;
-        pkgs.runCommand "public-home-inputs-check" { } ''
-          test -x ${syntheticHome.activationPackage}/activate
-          test -x ${syntheticPackage}/bin/public-home-check
-          test "$(cat ${syntheticSource})" = "public home source"
-          touch $out
-        '';
+      checks.${system} = {
+        public-home-inputs =
+          assert nixpkgsLib.elem syntheticPackage syntheticHome.config.home.packages;
+          assert syntheticHome.config.home.file.".config/public-home/source".source == syntheticSource;
+          assert nixpkgsLib.elem syntheticPackage syntheticDarwin.config.home-manager.users.zain.home.packages;
+          assert syntheticDarwin.config.home-manager.users.zain.home.file.".config/public-home/source".source == syntheticSource;
+          pkgs.runCommand "public-home-inputs-check" { } ''
+            test -x ${syntheticHome.activationPackage}/activate
+            test -x ${syntheticPackage}/bin/public-home-check
+            test "$(cat ${syntheticSource})" = "public home source"
+            touch $out
+          '';
+
+        amux-terminfo-environment =
+          let
+            systemTerminfoDirs = syntheticDarwin.config.environment.variables.TERMINFO_DIRS;
+            amuxTerminfoDirs = syntheticDarwin.config.launchd.user.agents.amux-launch.serviceConfig.EnvironmentVariables.TERMINFO_DIRS or null;
+          in
+          assert nixpkgsLib.hasInfix "/Applications/Ghostty.app/Contents/Resources/terminfo" systemTerminfoDirs;
+          assert amuxTerminfoDirs == systemTerminfoDirs;
+          pkgs.runCommand "amux-terminfo-environment-check" { } ''
+            touch $out
+          '';
+      };
 
       # Set Nix formatter
       # https://nixos.org/manual/nix/unstable/command-ref/new-cli/nix3-fmt#examples
