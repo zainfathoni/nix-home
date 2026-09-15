@@ -100,6 +100,18 @@
           pkgs.runCommand "amux-terminfo-environment-check" { } ''
             touch $out
           '';
+
+        ssh-terminfo-environment =
+          let
+            sshTailnetDaemon = syntheticDarwin.config.launchd.daemons.ssh-tailnet.command;
+            systemTerminfoDirs = pkgs.writeText "system-terminfo-dirs" syntheticDarwin.config.environment.variables.TERMINFO_DIRS;
+          in
+          pkgs.runCommand "ssh-terminfo-environment-check" { } ''
+            sshConfig=$(sed -n 's|^.* -f \(/nix/store/[^ ]*-sshd-tailnet.conf\)$|\1|p' ${sshTailnetDaemon} | head -n 1)
+            test -n "$sshConfig"
+            test "$(sed -n 's/^[[:space:]]*SetEnv TERMINFO_DIRS=//p' "$sshConfig")" = "$(cat ${systemTerminfoDirs})"
+            touch $out
+          '';
       };
 
       # Set Nix formatter

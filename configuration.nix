@@ -8,6 +8,7 @@ let
     "/usr/share/terminfo"
     "/Applications/Ghostty.app/Contents/Resources/terminfo"
   ];
+  terminfoDirsValue = lib.concatStringsSep ":" terminfoDirs;
 
   sshTailnetConfig = pkgs.writeText "sshd-tailnet.conf" ''
     Port 22022
@@ -28,6 +29,7 @@ let
     AllowUsers zain
     AuthorizedKeysFile .ssh/authorized_keys
     StrictModes yes
+    SetEnv TERMINFO_DIRS=${terminfoDirsValue}
 
     DisableForwarding yes
     PermitTunnel no
@@ -107,7 +109,7 @@ in
   # Include Ghostty's own terminfo directory so terminals using
   # `xterm-ghostty` can resolve terminal capabilities in Nix-managed
   # environments (including nix-darwin's generated set-environment script).
-  environment.variables.TERMINFO_DIRS = lib.mkForce terminfoDirs;
+  environment.variables.TERMINFO_DIRS = lib.mkForce terminfoDirsValue;
 
   nix.extraOptions = ''
     auto-optimise-store = true
@@ -178,7 +180,7 @@ in
         LANG = "en_US.UTF-8";
         LC_ALL = "en_US.UTF-8";
         PATH = "/Users/zain/.local/bin:/Users/zain/.amp/bin:/Users/zain/.nix-profile/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
-        TERMINFO_DIRS = lib.concatStringsSep ":" terminfoDirs;
+        TERMINFO_DIRS = terminfoDirsValue;
       };
       StandardOutPath = "/Users/zain/Library/Logs/dev.zainf.amux-launch.log";
       StandardErrorPath = "/Users/zain/Library/Logs/dev.zainf.amux-launch.log";
