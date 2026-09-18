@@ -44,6 +44,7 @@ in
         rerere.enabled = true;
         core.editor = "vim";
         branch.autoSetupMerge = "simple";
+        credential."https://ampcode.com".helper = "!amp git-credential-helper";
       };
     };
   };
