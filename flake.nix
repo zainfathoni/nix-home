@@ -101,6 +101,17 @@
             touch $out
           '';
 
+        amux-launchd-environment =
+          let
+            launchdEnvironment = syntheticDarwin.config.launchd.user.envVariables;
+          in
+          assert launchdEnvironment.LANG == "en_US.UTF-8";
+          assert launchdEnvironment.LC_ALL == "en_US.UTF-8";
+          assert launchdEnvironment.PATH == "/Users/zain/.local/bin:/Users/zain/.amp/bin:/Users/zain/.nix-profile/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
+          pkgs.runCommand "amux-launchd-environment-check" { } ''
+            touch $out
+          '';
+
         ssh-terminfo-environment =
           let
             sshTailnetDaemon = syntheticDarwin.config.launchd.daemons.ssh-tailnet.command;
