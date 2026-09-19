@@ -90,25 +90,12 @@
             touch $out
           '';
 
-        amux-terminfo-environment =
+        no-legacy-amux-launcher =
           let
-            systemTerminfoDirs = syntheticDarwin.config.environment.variables.TERMINFO_DIRS;
-            amuxTerminfoDirs = syntheticDarwin.config.launchd.user.agents.amux-launch.serviceConfig.EnvironmentVariables.TERMINFO_DIRS or null;
+            legacyAmuxAgent = syntheticDarwin.config.launchd.user.agents.amux-launch or null;
           in
-          assert nixpkgsLib.hasInfix "/Applications/Ghostty.app/Contents/Resources/terminfo" systemTerminfoDirs;
-          assert amuxTerminfoDirs == systemTerminfoDirs;
-          pkgs.runCommand "amux-terminfo-environment-check" { } ''
-            touch $out
-          '';
-
-        amux-launchd-environment =
-          let
-            launchdEnvironment = syntheticDarwin.config.launchd.user.envVariables;
-          in
-          assert launchdEnvironment.LANG == "en_US.UTF-8";
-          assert launchdEnvironment.LC_ALL == "en_US.UTF-8";
-          assert launchdEnvironment.PATH == "/Users/zain/.local/bin:/Users/zain/.amp/bin:/Users/zain/.nix-profile/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
-          pkgs.runCommand "amux-launchd-environment-check" { } ''
+          assert legacyAmuxAgent == null;
+          pkgs.runCommand "no-legacy-amux-launcher-check" { } ''
             touch $out
           '';
 
