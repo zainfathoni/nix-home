@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## amux AGENTS Prefs
+
+default_reasoning_effort: medium
+no_low: true
+no_read_thread: true
+oracle_no_thread_reads: true
+no_protocol_paste: true
+contract_v1_read_once_pointer: true
+
 This file provides guidance for agentic coding agents working with this Nix-based macOS configuration repository.
 
 ## Build/Test Commands
