@@ -119,6 +119,16 @@ in
   nix.settings.trusted-public-keys = [ "zain.cachix.org-1:BN70psyYfOc8wFoWbRhJo8C40bSejomRRci0BaNhCLE=" ];
   nix.settings.trusted-substituters = [ https://zain.cachix.org ];
 
+  # Let activation replace the /etc zsh files left by the Nix installer and
+  # macOS, instead of aborting with "Unexpected files in /etc".
+  # Hashes come from the .before-nix-darwin backups on each machine.
+  environment.etc."zshrc".knownSha256Hashes = [
+    "27274e44b88a1174787f9a3d437d3387edc4f9aaaf40356054130797f5dc7912"
+  ];
+  environment.etc."zprofile".knownSha256Hashes = [
+    "f320016e2cf13573731fbee34f9fe97ba867dd2a31f24893d3120154e9306e92"
+  ];
+
   # macOS system defaults configuration
   # https://daiderd.com/nix-darwin/manual/index.html#opt-system.defaults.dock.autohide
   system.defaults.dock.autohide = true;
