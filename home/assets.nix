@@ -23,6 +23,9 @@ in
   # Symlink Ghostty terminal configuration
   home.file.".config/ghostty/config".source = mkOutOfStoreSymlink "${nixConfigDirectory}/assets/.config/ghostty/config";
 
+  # Symlink the rex CLI bundled in Rex Beta.app onto PATH
+  home.file.".local/bin/rex".source = mkOutOfStoreSymlink "/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex";
+
   # Symlink Zed configuration files
   home.file.".config/zed/settings.json".source = mkOutOfStoreSymlink "${nixConfigDirectory}/assets/.config/zed/settings.json";
   home.file.".config/zed/keymap.json".source = mkOutOfStoreSymlink "${nixConfigDirectory}/assets/.config/zed/keymap.json";
