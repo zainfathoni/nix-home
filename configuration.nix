@@ -93,6 +93,13 @@ let
 
 in
 {
+  # Remove roots that can validate the compromised eMudhra intermediates.
+  # https://emudhra.we-have-a-problem.com/
+  security.pki.caCertificateBlacklist = [
+    "Comodo AAA Services root"
+    "emSign ECC Root CA - G3"
+  ];
+
   # Make sure the nix daemon always runs
   # Without this configuration, the switch command won't work due to this error:
   # error: The daemon is not enabled but this is a multi-user install, aborting activation

@@ -59,9 +59,6 @@
 
     # Go binaries
     "$HOME/go/bin"
-
-    # Volta
-    "$HOME/.volta/tools/image/node/24.2.0/bin"
   ];
 
   # The set of packages to appear in the user environment
