@@ -19,6 +19,10 @@
     CLAUDE_CODE_NO_FLICKER = "1";
     # Enable Amp remote control terminal integration
     AMP_REMOTE_CONTROL_TERMINAL = "1";
+    # Disable Amp attribution trailers in commits.
+    # https://ampcode.com/docs/cli/settings
+    AMP_DISABLE_AMP_COAUTHOR_TRAILER = "1";
+    AMP_DISABLE_AMP_THREAD_TRAILER = "1";
   };
 
   # Extra directories to add to $PATH
